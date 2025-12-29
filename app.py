@@ -18,7 +18,7 @@ if "started" not in st.session_state:
         "curr": 0,
         "session_data": [],
         "pdf_text": "",
-        "resume_text": "", # New field for resume
+        "resume_text": "",
         "started": False,
         "level": "Internship"
     })
@@ -31,37 +31,26 @@ def get_verified_context(query):
     except:
         return "Technical standard documentation."
 
-# --- 4. SIDEBAR: DOUBLE UPLOADER ---
+# --- 4. SIDEBAR ---
 with st.sidebar:
     st.title("⚙️ Interview Setup")
-    if "GROQ_API_KEY" in st.secrets: st.success("✅ API Key Active")
-    
     level = st.selectbox("Preparation Level", ["Internship", "Job"])
     num_q = st.number_input("Number of Questions", min_value=1, max_value=15, value=3)
-    
     st.divider()
-    st.subheader("📁 Upload Documents")
     study_file = st.file_uploader("Upload Study Material (PDF)", type="pdf")
     resume_file = st.file_uploader("Upload Your Resume (PDF)", type="pdf")
     
     if st.button("🚀 Start Personalized Interview"):
         if api_key and study_file and resume_file:
-            # Read Study PDF
             reader_s = PyPDF2.PdfReader(study_file)
             st.session_state.pdf_text = "".join([p.extract_text() for p in reader_s.pages])[:6000]
-            
-            # Read Resume PDF
             reader_r = PyPDF2.PdfReader(resume_file)
             st.session_state.resume_text = "".join([p.extract_text() for p in reader_r.pages])[:3000]
-            
-            # Reset session
             st.session_state.session_data = [{"q": None, "a": "", "hint": None, "eval": None} for _ in range(num_q)]
             st.session_state.curr = 0
             st.session_state.level = level
             st.session_state.started = True
             st.rerun()
-        else:
-            st.error("Missing API Key, Study Material, or Resume!")
 
 # --- 5. MAIN INTERFACE ---
 if st.session_state.started and api_key:
@@ -78,12 +67,22 @@ if st.session_state.started and api_key:
                 st.write(f"**Question:** {item['q']}")
                 if item['a']:
                     st.write(f"**Your Answer:** {item['a']}")
+                    # FIX: If evaluation is missing (None), generate it here
+                    if not item['eval']:
+                        with st.spinner("Generating final score..."):
+                            e_sys = "Provide 2 lines: Line 1 Score & Feedback. Line 2 Verified Ideal Answer."
+                            res = client.chat.completions.create(
+                                model="llama-3.1-8b-instant",
+                                messages=[{"role": "user", "content": f"Q: {item['q']} A: {item['a']}\n{e_sys}"}]
+                            )
+                            item['eval'] = res.choices[0].message.content
                     st.info(item['eval'])
                 else:
+                    st.warning("Skipped.")
                     v_context = get_verified_context(item['q'])
                     res = client.chat.completions.create(
                         model="llama-3.1-8b-instant",
-                        messages=[{"role": "user", "content": f"Verified Info: {v_context}. Provide a 2-line ideal answer for: {item['q']}"}]
+                        messages=[{"role": "user", "content": f"Provide a 2-line ideal answer for: {item['q']} based on {v_context}"}]
                     )
                     st.success(f"**Ideal Answer:**\n{res.choices[0].message.content}")
         
@@ -94,63 +93,62 @@ if st.session_state.started and api_key:
     else:
         # --- INTERVIEW SECTION ---
         st.progress((c + 1) / len(data))
-        st.write(f"**Personalized Question {c + 1} of {len(data)}**")
+        st.write(f"**Question {c + 1} of {len(data)}**")
         
-        # 1. PERSONALISED QUESTION GENERATION
         if data[c]["q"] is None:
-            with st.spinner("🤖 Analyzing your resume and notes..."):
-                asked = [item["q"] for item in data if item["q"]]
-                
-                # The "Magic" Resume Prompt
-                q_sys = f"""You are a technical interviewer. 
-                I will provide you with a Resume and Study Material.
-                TASK: Pick a project or skill from the Resume and ask a technical question about it using concepts from the Study Material.
-                EXAMPLE: 'I see you worked on an Eye Disease project. How would you handle class imbalance in that specific dataset based on the techniques in your notes?'
-                CRITICAL: {st.session_state.level} level. Do NOT repeat: {asked}. Output ONLY the question."""
-                
+            with st.spinner("🤖 Thinking..."):
+                q_sys = f"You are a technical interviewer. Ask ONE {st.session_state.level} level question based on projects in the Resume and technical concepts in the Study Notes. Output ONLY the question."
                 res = client.chat.completions.create(
                     model="llama-3.1-8b-instant",
                     messages=[
                         {"role": "system", "content": q_sys},
-                        {"role": "user", "content": f"RESUME: {st.session_state.resume_text}\nSTUDY NOTES: {st.session_state.pdf_text}"}
+                        {"role": "user", "content": f"RESUME: {st.session_state.resume_text}\nNOTES: {st.session_state.pdf_text}"}
                     ]
                 )
                 data[c]["q"] = res.choices[0].message.content
                 st.rerun()
 
         st.subheader(data[c]["q"])
-
-        # Hint, Answer, Navigation (Same as before but cleaned up)
-        if st.button("💡 Get Hint"):
-            h_res = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[{"role": "user", "content": f"Provide a 7-word hint for: {data[c]['q']}"}]
-            )
-            data[c]["hint"] = h_res.choices[0].message.content
-        
         if data[c]["hint"]: st.warning(f"💡 {data[c]['hint']}")
 
         data[c]["a"] = st.text_area("Your Answer:", value=data[c]["a"], height=100, key=f"ans_{c}")
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            if st.button("⬅️ Back") and c > 0: st.session_state.curr -= 1; st.rerun()
+            if st.button("⬅️ Previous") and c > 0: st.session_state.curr -= 1; st.rerun()
         with col2:
+            if st.button("💡 Hint"):
+                res = client.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    messages=[{"role": "user", "content": f"7-word hint for: {data[c]['q']}"}]
+                )
+                data[c]["hint"] = res.choices[0].message.content
+                st.rerun()
+        with col3:
             btn_lbl = "Next ➡️" if data[c]["a"] else "Skip ⏩"
             if st.button(btn_lbl):
-                if data[c]["a"] and not data[c]["eval"]:
+                if data[c]["a"]: # Evaluate if answer exists
                     with st.spinner("Checking..."):
                         e_sys = "Provide 2 lines: Line 1 Score & Feedback. Line 2 Verified Ideal Answer."
                         res = client.chat.completions.create(
                             model="llama-3.1-8b-instant",
-                            messages=[{"role": "user", "content": f"Q: {data[c]['q']}\nA: {data[c]['a']}\n{e_sys}"}]
+                            messages=[{"role": "user", "content": f"Q: {data[c]['q']} A: {data[c]['a']}\n{e_sys}"}]
                         )
                         data[c]["eval"] = res.choices[0].message.content
                 st.session_state.curr += 1; st.rerun()
-        with col3:
-            if st.button("🏁 Finish"): st.session_state.curr = len(data); st.rerun()
+        with col4:
+            if st.button("🏁 Finish"):
+                # FIX: Check if the LAST question has an answer but no eval yet
+                if data[c]["a"] and not data[c]["eval"]:
+                    with st.spinner("Evaluating last question..."):
+                        e_sys = "Provide 2 lines: Line 1 Score & Feedback. Line 2 Verified Ideal Answer."
+                        res = client.chat.completions.create(
+                            model="llama-3.1-8b-instant",
+                            messages=[{"role": "user", "content": f"Q: {data[c]['q']} A: {data[c]['a']}\n{e_sys}"}]
+                        )
+                        data[c]["eval"] = res.choices[0].message.content
+                st.session_state.curr = len(data); st.rerun()
 
 else:
     st.title("🎯 AI Career Coach")
-    st.write("The only platform that interviews you on YOUR projects and YOUR notes.")
-    st.info("Please upload both your Resume and Study Material in the sidebar to begin.")
+    st.write("Personalized practice based on your resume and notes.")
