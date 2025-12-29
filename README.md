@@ -1,6 +1,6 @@
 # AI Interview Coach: Personalized Career Simulator
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_svg.svg)]([https://ai-interview-prep-platform-cwps9szn55ybmqtga6wden.streamlit.app/])
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_svg.svg)](https://ai-interview-prep-platform-cwps9szn55ybmqtga6wden.streamlit.app/)
 
 **AI Interview Coach** is a high-performance, RAG-powered (Retrieval-Augmented Generation) platform that simulates realistic technical interviews. Unlike generic interview bots, this platform analyzes **your specific projects** (from your Resume) and **your specific study notes** (from uploaded PDFs) to generate a unique, data-driven interview experience.
 
