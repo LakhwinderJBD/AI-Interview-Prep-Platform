@@ -6,13 +6,13 @@ from duckduckgo_search import DDGS
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(page_title="AI Interview Coach", page_icon="🎯", layout="centered")
 
-# --- 2. API KEY HANDLING (Secrets or Sidebar) ---
+# --- 2. API KEY HANDLING ---
 if "GROQ_API_KEY" in st.secrets:
     api_key = st.secrets["GROQ_API_KEY"]
 else:
     api_key = st.sidebar.text_input("Enter Groq API Key", type="password")
 
-# --- 3. SESSION STATE INITIALIZATION ---
+# --- 3. INITIALIZE SESSION STATE ---
 if "started" not in st.session_state:
     st.session_state.update({
         "curr": 0,
@@ -26,11 +26,10 @@ if "started" not in st.session_state:
 def get_verified_context(query):
     try:
         with DDGS() as ddgs:
-            # Search for the topic to ensure the AI has the latest verified info
             results = [r['body'] for r in ddgs.text(query, max_results=1)]
             return "\n".join(results)
     except:
-        return "Standard technical documentation."
+        return "Technical standard documentation."
 
 # --- 4. SIDEBAR: SETUP ---
 with st.sidebar:
@@ -69,16 +68,13 @@ if st.session_state.started and api_key:
         for i, item in enumerate(data):
             status = "✅ Attempted" if item['a'] else "❌ Skipped"
             with st.expander(f"Question {i+1} | {status}"):
-                # Always show the question text
                 st.write(f"**Question:** {item['q']}")
-                
                 if item['a']:
                     st.write(f"**Your Answer:** {item['a']}")
                     st.info(item['eval'])
                 else:
                     st.warning("You skipped this question.")
                     with st.spinner("Fetching verified ideal answer..."):
-                        # Get verified info from internet
                         v_context = get_verified_context(item['q'])
                         res = client.chat.completions.create(
                             model="llama-3.1-8b-instant",
@@ -95,13 +91,23 @@ if st.session_state.started and api_key:
         st.progress((c + 1) / len(data))
         st.write(f"**Question {c + 1} of {len(data)}** | Level: **{lvl}**")
         
-        # 1. Generate Question Logic
+        # --- FIX: UNIQUE QUESTION GENERATION ---
         if data[c]["q"] is None:
-            with st.spinner("🤖 AI is thinking..."):
-                q_sys = f"You are a {lvl} interviewer. Ask ONE technical question from the provided text. NO preamble. ONLY the question text."
+            with st.spinner("🤖 Thinking of a unique question..."):
+                # Collect all questions that were already asked in this session
+                asked_questions = [item["q"] for item in data if item["q"] is not None]
+                
+                q_sys = f"""You are a {lvl} interviewer. 
+                Ask ONE technical question based on the provided text.
+                CRITICAL RULE: Do NOT ask any of these questions again: {asked_questions}.
+                Output ONLY the question text. No preamble."""
+                
                 res = client.chat.completions.create(
                     model="llama-3.1-8b-instant",
-                    messages=[{"role": "system", "content": q_sys}, {"role": "user", "content": st.session_state.pdf_text}]
+                    messages=[
+                        {"role": "system", "content": q_sys}, 
+                        {"role": "user", "content": st.session_state.pdf_text}
+                    ]
                 )
                 data[c]["q"] = res.choices[0].message.content
                 st.rerun()
@@ -135,7 +141,6 @@ if st.session_state.started and api_key:
             if st.button(btn_label):
                 if data[c]["a"] and not data[c]["eval"]:
                     with st.spinner("Checking..."):
-                        # Get internet verification for the evaluation
                         v_context = get_verified_context(data[c]['q'])
                         e_sys = """Provide exactly 2 lines of response. 
                         Line 1: Score/10 and 1-sentence feedback. 
@@ -154,9 +159,4 @@ if st.session_state.started and api_key:
 
 else:
     st.title("🎯 AI Interview Coach")
-    st.write("Professional, document-based interview practice. Upload your notes to begin.")
-    st.markdown("""
-    - **Step 1:** Add your API Key in the Sidebar.
-    - **Step 2:** Upload your PDF Study Material.
-    - **Step 3:** Choose your Level and hit **Start**.
-    """)
+    st.write("Professional, document-based practice. Upload your PDF and hit Start.")
