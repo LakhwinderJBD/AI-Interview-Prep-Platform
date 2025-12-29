@@ -1,6 +1,6 @@
 # AI Interview Preparation Platform
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_svg.svg)](YOUR_STREAMLIT_LINK_HERE)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_svg.svg)](https://ai-interview-prep-platform-cwps9szn55ybmqtga6wden.streamlit.app/)
 
 An AI-powered interview simulation tool designed to help students and professionals prepare for **Data Science** and **Machine Learning** roles. This platform uses Retrieval-Augmented Generation (RAG) to allow users to practice using their own study materials or company-specific question banks.
 
