@@ -22,7 +22,7 @@ if "started" not in st.session_state:
         "level": "Internship"
     })
 
-# --- INTERNET VERIFICATION FUNCTION ---
+# --- INTERNET VERIFICATION ---
 def get_verified_context(query):
     try:
         with DDGS() as ddgs:
@@ -61,7 +61,7 @@ if st.session_state.started and api_key:
     data = st.session_state.session_data
     lvl = st.session_state.level
 
-    # --- PHASE A: FINAL PERFORMANCE REPORT ---
+    # --- PHASE A: FINAL REPORT ---
     if c >= len(data):
         st.header("📊 Final Performance Report")
         st.divider()
@@ -76,11 +76,12 @@ if st.session_state.started and api_key:
                     st.warning("You skipped this question.")
                     with st.spinner("Fetching verified ideal answer..."):
                         v_context = get_verified_context(item['q'])
+                        # STRICT 2-LINE PROMPT FOR REPORT
                         res = client.chat.completions.create(
                             model="llama-3.1-8b-instant",
-                            messages=[{"role": "user", "content": f"Verified Info: {v_context}. Provide a 2-line ideal answer for: {item['q']}. STRICTLY 2 LINES."}]
+                            messages=[{"role": "user", "content": f"Verified Info: {v_context}. Provide exactly 2 lines for the ideal answer to: {item['q']}. Line 1: Summary. Line 2: Technical detail. DO NOT mention other questions."}]
                         )
-                        st.success(f"**Verified Ideal Answer:**\n{res.choices[0].message.content}")
+                        st.success(f"**Ideal Answer:**\n{res.choices[0].message.content}")
         
         if st.button("🔄 Start New Session"):
             st.session_state.started = False
@@ -91,30 +92,25 @@ if st.session_state.started and api_key:
         st.progress((c + 1) / len(data))
         st.write(f"**Question {c + 1} of {len(data)}** | Level: **{lvl}**")
         
-        # --- FIX: UNIQUE QUESTION GENERATION ---
+        # 1. Unique Question Generation
         if data[c]["q"] is None:
-            with st.spinner("🤖 Thinking of a unique question..."):
-                # Collect all questions that were already asked in this session
+            with st.spinner("🤖 Thinking..."):
                 asked_questions = [item["q"] for item in data if item["q"] is not None]
-                
                 q_sys = f"""You are a {lvl} interviewer. 
-                Ask ONE technical question based on the provided text.
-                CRITICAL RULE: Do NOT ask any of these questions again: {asked_questions}.
-                Output ONLY the question text. No preamble."""
+                Ask ONE technical question based on the text.
+                CRITICAL: Do NOT repeat: {asked_questions}.
+                Output ONLY the question text."""
                 
                 res = client.chat.completions.create(
                     model="llama-3.1-8b-instant",
-                    messages=[
-                        {"role": "system", "content": q_sys}, 
-                        {"role": "user", "content": st.session_state.pdf_text}
-                    ]
+                    messages=[{"role": "system", "content": q_sys}, {"role": "user", "content": st.session_state.pdf_text}]
                 )
                 data[c]["q"] = res.choices[0].message.content
                 st.rerun()
 
         st.subheader(data[c]["q"])
 
-        # 2. Hint Logic (Strict 7 Words)
+        # 2. Hint Logic
         if st.button("💡 Get Hint"):
             with st.spinner(""):
                 h_sys = "Provide a hint for this question in EXACTLY 7 words or less. Do NOT give the answer."
@@ -142,12 +138,21 @@ if st.session_state.started and api_key:
                 if data[c]["a"] and not data[c]["eval"]:
                     with st.spinner("Checking..."):
                         v_context = get_verified_context(data[c]['q'])
-                        e_sys = """Provide exactly 2 lines of response. 
-                        Line 1: Score/10 and 1-sentence feedback. 
-                        Line 2: A one-sentence verified ideal answer based on the context and PDF."""
+                        
+                        # --- THE FIX: STRICT ISOLATION PROMPT ---
+                        e_sys = """Evaluate ONLY the Current Question and Current Answer.
+                        DO NOT provide a list of multiple questions.
+                        DO NOT mention previous questions.
+                        Format: Provide exactly 2 lines.
+                        Line 1: Score/10 and 1-sentence feedback.
+                        Line 2: A one-sentence verified ideal answer."""
+                        
                         res = client.chat.completions.create(
                             model="llama-3.1-8b-instant",
-                            messages=[{"role": "user", "content": f"Verified Info: {v_context}\nPDF Info: {st.session_state.pdf_text[:500]}\nQ: {data[c]['q']}\nA: {data[c]['a']}\n{e_sys}"}]
+                            messages=[
+                                {"role": "system", "content": e_sys},
+                                {"role": "user", "content": f"Current Question: {data[c]['q']}\nCurrent Answer: {data[c]['a']}"}
+                            ]
                         )
                         data[c]["eval"] = res.choices[0].message.content
                 st.session_state.curr += 1
@@ -159,4 +164,4 @@ if st.session_state.started and api_key:
 
 else:
     st.title("🎯 AI Interview Coach")
-    st.write("Professional, document-based practice. Upload your PDF and hit Start.")
+    st.write("Professional practice. Upload your PDF and hit Start.")
