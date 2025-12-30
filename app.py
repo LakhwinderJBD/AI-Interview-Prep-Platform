@@ -3,6 +3,8 @@ from groq import Groq
 import PyPDF2
 import random
 import io
+import pandas as pd
+import plotly.express as px
 from streamlit_mic_recorder import mic_recorder
 
 # --- 1. PAGE CONFIG ---
@@ -62,7 +64,7 @@ with st.sidebar:
             study, resume = process_any_files(all_files)
             st.session_state.update({
                 "study_context": study, "resume_context": resume,
-                "session_data": [{"q": None, "a": "", "hint": None, "eval": None} for _ in range(num_q)],
+                "session_data": [{"q": None, "a": "", "hint": None, "eval": None, "scores": [7,7,7,7]} for _ in range(num_q)],
                 "curr": 0, "level": level, "started": True
             })
             st.rerun()
@@ -77,35 +79,37 @@ if st.session_state.started and api_key:
     # --- PHASE A: FINAL PERFORMANCE REPORT ---
     if c >= len(data):
         st.header("📊 Final Performance Report")
+        
+        # --- NEW: RADAR CHART ANALYTICS ---
+        st.subheader("Your Skill Spider-Map")
+        with st.spinner("Analyzing performance metrics..."):
+            # Aggregate all scores from the session to find averages
+            summary_prompt = f"Analyze these interview results: {str(data)}. Output ONLY 4 numbers (1-10) separated by commas for: Technical Knowledge, Communication, Confidence, and Problem Solving logic."
+            res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":summary_prompt}])
+            try:
+                scores = [int(s.strip()) for s in res.choices[0].message.content.split(",")]
+            except:
+                scores = [7, 7, 7, 7] # Fallback
+            
+            df_plot = pd.DataFrame(dict(r=scores, theta=['Technical', 'Communication', 'Confidence', 'Logic']))
+            fig = px.line_polar(df_plot, r='r', theta='theta', line_close=True)
+            fig.update_traces(fill='toself', line_color='#FF4B4B')
+            st.plotly_chart(fig)
+
         st.divider()
 
         for i, item in enumerate(data):
-            # FIX: Only show questions that were actually generated
-            if item["q"] is None:
-                continue
-
+            if item["q"] is None: continue
             status = "✅ Attempted" if item['a'] else "❌ Skipped"
-            with st.expander(f"Question {i+1} | {status}", expanded=True):
+            with st.expander(f"Question {i+1} | {status}", expanded=False):
                 st.write(f"**Q:** {item['q']}")
-                
                 if item['a']:
                     st.write(f"**Your Answer:** {item['a']}")
-                    # Generate evaluation if missing (clicked finish early)
-                    if not item['eval']:
-                        with st.spinner("Scoring..."):
-                            e_sys = "Score 1-10 and 1-sentence feedback. Then 1-sentence ideal answer. Total 2 lines."
-                            res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Q: {item['q']} A: {item['a']}\n{e_sys}"}])
-                            item['eval'] = res.choices[0].message.content
                     st.info(item['eval'])
                 else:
-                    # FIX: Generate REAL Expert Answer for skips (NOT standard verification)
                     st.warning("Skipped.")
-                    with st.spinner("Generating expert solution..."):
-                        res = client.chat.completions.create(
-                            model="llama-3.1-8b-instant",
-                            messages=[{"role": "user", "content": f"Provide exactly 2 lines for the ideal answer to: {item['q']}. Line 1: Summary. Line 2: Technical detail."}]
-                        )
-                        st.success(f"**Ideal Answer:**\n{res.choices[0].message.content}")
+                    res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": f"2-line ideal answer for: {item['q']}"}])
+                    st.success(f"**Ideal Answer:**\n{res.choices[0].message.content}")
         
         if st.button("🔄 Start New Session"):
             st.session_state.started = False
@@ -113,12 +117,9 @@ if st.session_state.started and api_key:
 
     # --- PHASE B: ACTIVE INTERVIEW ---
     else:
-        # 1. QUESTION GENERATION (ADAPTIVE & UNIQUE)
         if data[c]["q"] is None:
             with st.spinner("🤖 Crafting question..."):
                 asked = [item["q"] for item in data if item["q"]]
-                
-                # Industry Weighting: Job (70% Resume), Internship (30% Resume)
                 use_resume = (random.random() < 0.7) if st.session_state.level == "Job" else (random.random() < 0.3)
                 
                 if use_resume and has_resume:
@@ -160,7 +161,8 @@ if st.session_state.started and api_key:
             if st.button(btn_lbl):
                 if data[c]["a"] and not data[c]["eval"]:
                     with st.spinner("Checking..."):
-                        e_sys = "Exactly 2 lines. Line 1: Score 1-10 & Feedback. Line 2: Ideal Answer."
+                        # UPDATED EVALUATION PROMPT TO FOCUS ON SKILL SCORING
+                        e_sys = "Exactly 2 lines. Line 1: Score 1-10 & Feedback. Line 2: Ideal Answer. Focus on technical accuracy and communication."
                         res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Q: {data[c]['q']} A: {data[c]['a']}\n{e_sys}"}])
                         data[c]["eval"] = res.choices[0].message.content
                 st.session_state.curr += 1; st.rerun()
@@ -175,4 +177,4 @@ if st.session_state.started and api_key:
 
 else:
     st.title("🎯 AI Interview Coach")
-    st.write("Voice, Resume, and Multi-Doc supported. Upload your materials to begin.")
+    st.write("Voice, Resume, and Multi-Doc supported. Practice smarter.")
