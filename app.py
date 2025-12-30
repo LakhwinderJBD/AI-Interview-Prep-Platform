@@ -11,25 +11,20 @@ from streamlit_mic_recorder import mic_recorder
 from supabase import create_client, Client
 
 # --- 1. PAGE CONFIG ---
-st.set_page_config(page_title="AI Career Architect", page_icon="🏛️", layout="centered")
-
-st.markdown("""
-    <style>
-    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; }
-    .report-card { background-color: #f9f9f9; padding: 15px; border-radius: 10px; border: 1px solid #ddd; }
-    </style>
-    """, unsafe_allow_html=True)
+st.set_page_config(page_title="AI Career Master", page_icon="🎙️", layout="centered")
 
 # --- 2. DATABASE & API INITIALIZATION ---
-# Initialize Supabase
+# This part looks for your keys in Streamlit's "Secrets" vault
 supabase_client = None
-try:
-    if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
-        supabase_client: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
-except Exception as e:
-    st.sidebar.warning("Cloud Database not linked. Reviews won't be saved permanently.")
+if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
+    try:
+        supabase_client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    except Exception as e:
+        st.sidebar.error(f"Database Error: {e}")
+else:
+    st.sidebar.warning("Database Secrets not found. Reviews will not be saved.")
 
-# Initialize Groq API Key
+# Initialize Groq API
 if "GROQ_API_KEY" in st.secrets:
     api_key = st.secrets["GROQ_API_KEY"]
 else:
@@ -103,24 +98,23 @@ if st.session_state.started and api_key:
     data = st.session_state.session_data
     has_resume = len(st.session_state.resume_context) > 10
 
-    # --- PHASE A: FINAL REPORT & ANALYTICS ---
+    # --- PHASE A: FINAL REPORT & CLOUD ANALYTICS ---
     if c >= len(data):
         st.header("📊 Final Master Analytics")
         
         # 1. Skill Radar Chart
         st.subheader("Your Skill Spider-Map")
-        with st.spinner("Analyzing skill metrics..."):
-            summary_prompt = f"Analyze these interview results: {str(data)}. Output ONLY 4 numbers (1-10) separated by commas for: Technical Knowledge, Communication, Confidence, and Problem Solving logic."
-            res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":summary_prompt}])
-            try:
-                scores = [int(s.strip()) for s in res.choices[0].message.content.split(",")]
-            except:
-                scores = [7, 7, 7, 7]
-            
-            df_plot = pd.DataFrame(dict(r=scores, theta=['Technical', 'Communication', 'Confidence', 'Logic']))
-            fig = px.line_polar(df_plot, r='r', theta='theta', line_close=True)
-            fig.update_traces(fill='toself', line_color='#FF4B4B')
-            st.plotly_chart(fig)
+        summary_prompt = f"Analyze these results: {str(data)}. Output ONLY 4 numbers (1-10) separated by commas for: Technical, Communication, Confidence, Logic."
+        res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":summary_prompt}])
+        try:
+            scores = [int(s.strip()) for s in res.choices[0].message.content.split(",")]
+        except:
+            scores = [7, 7, 7, 7]
+        
+        df_plot = pd.DataFrame(dict(r=scores, theta=['Technical', 'Communication', 'Confidence', 'Logic']))
+        fig = px.line_polar(df_plot, r='r', theta='theta', line_close=True)
+        fig.update_traces(fill='toself', line_color='#FF4B4B')
+        st.plotly_chart(fig)
 
         st.divider()
         
@@ -133,39 +127,41 @@ if st.session_state.started and api_key:
                 if item['a']:
                     st.write(f"**Your Answer:** {item['a']}")
                     if not item['eval']:
-                        eval_res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Score this 1-10 and feedback for Q: {item['q']} A: {item['a']}"}])
+                        eval_res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Score 1-10 & Feedback: Q: {item['q']} A: {item['a']}"}])
                         item['eval'] = eval_res.choices[0].message.content
                     st.info(item['eval'])
                 else:
                     st.warning("Skipped.")
-                    res_sol = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": f"Provide exactly 2 lines for the ideal answer to: {item['q']}"}])
+                    res_sol = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": f"2-line answer for: {item['q']}"}])
                     st.success(f"**Ideal Answer:**\n{res_sol.choices[0].message.content}")
 
         st.divider()
 
-        # 3. PERMANENT REVIEW SYSTEM
-        st.subheader("🌟 Permanent User Review")
+        # 3. SUPABASE PERMANENT STORAGE
+        st.subheader("🌟 Save to Master Cloud Database")
         with st.form("database_feedback"):
             u_rating = st.select_slider("Rate AI Accuracy (1-5)", options=[1, 2, 3, 4, 5], value=5)
             u_comments = st.text_area("Developer Note: What should I improve?")
-            if st.form_submit_button("Send to Cloud Database"):
+            
+            if st.form_submit_button("Submit to Cloud"):
                 if supabase_client:
                     try:
-                        # Simple extraction of score for average
+                        # Extract average score from session
                         nums = re.findall(r'\d+', str(data))
                         session_avg = sum([int(n) for n in nums[:len(data)]]) / len(data) if nums else 0
                         
+                        # INSERT INTO SUPABASE
                         supabase_client.table("reviews").insert({
                             "level": st.session_state.level,
                             "rating": u_rating,
                             "comment": u_comments,
                             "avg_score": session_avg
                         }).execute()
-                        st.success("Review saved permanently in the cloud!")
+                        st.success("✅ Review saved permanently in Supabase cloud!")
                     except Exception as e:
-                        st.error(f"Database Error: {e}")
+                        st.error(f"Database Save Failed: {e}")
                 else:
-                    st.error("Database not connected. Please check your secrets.")
+                    st.error("Database Client not initialized. Check Secrets.")
 
         if st.button("🔄 Start New Session"):
             st.session_state.started = False
@@ -202,7 +198,7 @@ if st.session_state.started and api_key:
         # Text Input
         data[c]["a"] = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=120)
 
-        # BUTTONS
+        # Navigation Buttons
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             if st.button("⬅️ Previous") and c > 0:
@@ -210,8 +206,8 @@ if st.session_state.started and api_key:
                 st.rerun()
         with col2:
             if st.button("💡 Hint"):
-                res_h = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"7-word technical hint for: {data[c]['q']}"}])
-                data[c]["hint"] = res_h.choices[0].message.content
+                res_hint = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"7-word technical hint for: {data[c]['q']}"}])
+                data[c]["hint"] = res_hint.choices[0].message.content
                 st.rerun()
         with col3:
             if st.button("Next ➡️"):
