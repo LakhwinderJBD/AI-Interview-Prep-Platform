@@ -3,21 +3,22 @@ from groq import Groq
 import PyPDF2
 import random
 import io
+import os
+import re
 import pandas as pd
 import plotly.express as px
 from streamlit_mic_recorder import mic_recorder
-from supabase import create_client, Client # NEW
-import re
+from supabase import create_client, Client
 
 # --- 1. PAGE CONFIG ---
 st.set_page_config(page_title="AI Career Architect", page_icon="🏛️", layout="centered")
 
 # --- 2. DATABASE & API INITIALIZATION ---
-# Initialize Supabase
+# Initialize Supabase (Connecting to your Cloud Database)
 try:
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 except:
-    st.error("Supabase credentials not found. Database features will be disabled.")
+    st.error("Database connection missing. Add SUPABASE_URL and KEY to Streamlit Secrets.")
 
 # Initialize Groq
 if "GROQ_API_KEY" in st.secrets:
@@ -33,7 +34,7 @@ if "started" not in st.session_state:
         "started": False, "level": "Internship"
     })
 
-# --- HELPER FUNCTIONS ---
+# --- 4. HELPER FUNCTIONS ---
 def transcribe_audio(audio_bytes):
     client = Groq(api_key=api_key)
     audio_file = io.BytesIO(audio_bytes)
@@ -50,23 +51,24 @@ def process_any_files(uploaded_files):
         else: s_text += text
     return s_text[:10000], r_text[:5000]
 
-# --- 4. SIDEBAR ---
+# --- 5. SIDEBAR: SETUP ---
 with st.sidebar:
     st.title("⚙️ System Config")
     level = st.selectbox("Interview Level", ["Internship", "Job"])
     num_q = st.number_input("Questions", min_value=1, max_value=20, value=3)
-    all_files = st.file_uploader("Upload PDFs", type="pdf", accept_multiple_files=True)
+    all_files = st.file_uploader("Upload PDFs (Notes + Resume)", type="pdf", accept_multiple_files=True)
     if st.button("🚀 Start Personalized Session"):
         if api_key and all_files:
-            study, resume = process_any_files(all_files)
-            st.session_state.update({
-                "study_context": study, "resume_context": resume,
-                "session_data": [{"q": None, "a": "", "hint": None, "eval": None} for _ in range(num_q)],
-                "curr": 0, "level": level, "started": True
-            })
-            st.rerun()
+            with st.spinner("Analyzing materials..."):
+                study, resume = process_any_files(all_files)
+                st.session_state.update({
+                    "study_context": study, "resume_context": resume,
+                    "session_data": [{"q": None, "a": "", "hint": None, "eval": None} for _ in range(num_q)],
+                    "curr": 0, "level": level, "started": True
+                })
+                st.rerun()
 
-# --- 5. MAIN INTERFACE ---
+# --- 6. MAIN INTERFACE ---
 if st.session_state.started and api_key:
     client = Groq(api_key=api_key)
     c = st.session_state.curr
@@ -78,10 +80,12 @@ if st.session_state.started and api_key:
         
         # Skill Radar Chart
         st.subheader("Performance Spider-Map")
-        summary_prompt = f"Analyze: {str(data)}. Output ONLY 4 numbers (1-10) separated by commas for: Technical, Communication, Confidence, Logic."
+        summary_prompt = f"Analyze these interview results: {str(data)}. Output ONLY 4 numbers (1-10) separated by commas for: Technical Knowledge, Communication, Confidence, and Problem Solving logic."
         res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":summary_prompt}])
-        try: scores = [int(s.strip()) for s in res.choices[0].message.content.split(",")]
-        except: scores = [7, 7, 7, 7]
+        try: 
+            scores = [int(s.strip()) for s in res.choices[0].message.content.split(",")]
+        except: 
+            scores = [7, 7, 7, 7]
         
         df_plot = pd.DataFrame(dict(r=scores, theta=['Technical', 'Communication', 'Confidence', 'Logic']))
         fig = px.line_polar(df_plot, r='r', theta='theta', line_close=True)
@@ -95,7 +99,13 @@ if st.session_state.started and api_key:
             if item["q"]:
                 with st.expander(f"Question {i+1}"):
                     st.write(f"**Q:** {item['q']}")
-                    st.info(item['eval'] if item['a'] else "Skipped.")
+                    if item['a']:
+                        st.write(f"**Your Answer:** {item['a']}")
+                        st.info(item['eval'])
+                    else:
+                        st.warning("Skipped. Expert Solution coming...")
+                        res_sol = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Provide a 2-line ideal answer for: {item['q']}"}])
+                        st.success(res_sol.choices[0].message.content)
 
         st.divider()
 
@@ -107,12 +117,12 @@ if st.session_state.started and api_key:
             
             if st.form_submit_button("Send to Cloud Database"):
                 try:
-                    # Calculate session average
+                    # Calculate session average score
                     nums = re.findall(r'\d+', str(data))
                     session_avg = sum([int(n) for n in nums[:len(data)]]) / len(data) if nums else 0
                     
                     # INSERT INTO SUPABASE
-                    db_response = supabase.table("reviews").insert({
+                    supabase.table("reviews").insert({
                         "level": st.session_state.level,
                         "rating": u_rating,
                         "comment": u_comments,
@@ -136,7 +146,6 @@ if st.session_state.started and api_key:
                     )
                     st.info(analysis.choices[0].message.content)
                     
-                    # Show Download Link for Interviewer
                     csv = df_db.to_csv(index=False).encode('utf-8')
                     st.download_button("📥 Download Cloud Database (Excel)", csv, "cloud_analytics.csv", "text/csv")
                 else:
@@ -148,35 +157,67 @@ if st.session_state.started and api_key:
 
     # --- PHASE B: ACTIVE INTERVIEW ---
     else:
+        # 1. QUESTION GENERATION
         if data[c]["q"] is None:
-            use_resume = (random.random() < 0.7) if st.session_state.level == "Job" else (random.random() < 0.3)
-            q_sys = f"You are a {st.session_state.level} interviewer. Ask ONE tech question."
-            u_content = f"RESUME: {st.session_state.resume_context}\nNOTES: {st.session_state.study_context}"
-            res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "system", "content": q_sys}, {"role": "user", "content": u_content}])
-            data[c]["q"] = res.choices[0].message.content
-            st.rerun()
+            with st.spinner("🤖 AI is thinking..."):
+                asked = [item["q"] for item in data if item["q"]]
+                use_resume = (random.random() < 0.7) if st.session_state.level == "Job" else (random.random() < 0.3)
+                
+                if use_resume and len(st.session_state.resume_context) > 10:
+                    q_sys = f"You are a {st.session_state.level} interviewer. Ask ONE technical question based on a project in the Resume. Do not repeat: {asked}. Output ONLY the question text."
+                    u_content = f"RESUME: {st.session_state.resume_context}\nNOTES: {st.session_state.study_context}"
+                else:
+                    q_sys = f"You are a technical interviewer. Ask ONE specific question based ONLY on the study material. Do not repeat: {asked}. NO preamble. ONLY question text."
+                    u_content = f"NOTES: {st.session_state.study_context}"
 
+                res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "system", "content": q_sys}, {"role": "user", "content": u_content}])
+                data[c]["q"] = res.choices[0].message.content
+                st.rerun()
+
+        st.progress((c + 1) / len(data))
         st.subheader(data[c]["q"])
-        audio = mic_recorder(start_prompt="🎤 Answer with Voice", stop_prompt="🛑 Stop", key=f'v_{c}')
-        if audio: data[c]["a"] = transcribe_audio(audio['bytes'])
-        
+
+        # VOICE INPUT
+        audio = mic_recorder(start_prompt="🎤 Speak Answer", stop_prompt="🛑 Stop & Transcribe", key=f'v_{c}')
+        if audio:
+            with st.spinner("Transcribing..."):
+                transcript = transcribe_audio(audio['bytes'])
+                data[c]["a"] = transcript
+
+        # TEXT BOX
         data[c]["a"] = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=120)
 
         # BUTTONS
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            if st.button("⬅️ Previous") and c > 0: st.session_state.curr -= 1; st.rerun()
+            if st.button("⬅️ Previous") and c > 0:
+                st.session_state.curr -= 1
+                st.rerun()
         with col2:
-            if st.button("Next ➡️"):
-                if data[c]["a"]:
-                    e_sys = "Score 1-10 & Feedback + Ideal Answer. 2 lines total."
-                    eval_res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Q: {data[c]['q']} A: {data[c]['a']}\n{e_sys}"}])
-                    data[c]["eval"] = eval_res.choices[0].message.content
-                st.session_state.curr += 1; st.rerun()
+            if st.button("💡 Hint"):
+                res_hint = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"7-word technical hint for: {data[c]['q']}"}])
+                data[c]["hint"] = res_hint.choices[0].message.content
+                st.rerun()
         with col3:
+            if st.button("Next ➡️"):
+                if data[c]["a"] and not data[c]["eval"]:
+                    with st.spinner("Checking answer..."):
+                        e_sys = "Exactly 2 lines. Line 1: Score 1-10 & Feedback. Line 2: Ideal Answer."
+                        res_eval = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Q: {data[c]['q']} A: {data[c]['a']}\n{e_sys}"}])
+                        data[c]["eval"] = res_eval.choices[0].message.content
+                st.session_state.curr += 1
+                st.rerun()
+        with col4:
             if st.button("🏁 Finish"):
-                st.session_state.curr = len(data); st.rerun()
+                if data[c]["a"] and not data[c]["eval"]:
+                    res_eval = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Q: {data[c]['q']} A: {data[c]['a']}\n2-line feedback."}])
+                    data[c]["eval"] = res_eval.choices[0].message.content
+                st.session_state.curr = len(data)
+                st.rerun()
+
+        if data[c]["hint"]: st.warning(f"💡 {data[c]['hint']}")
 
 else:
     st.title("🎯 AI Career Architect")
-    st.write("Professional practice with permanent Cloud Analytics.")
+    st.write("Professional Interview Platform. Upload materials and start.")
+    st.info("Upload multiple PDFs (Notes, Resume, CV) in the sidebar to begin.")
