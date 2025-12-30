@@ -42,7 +42,7 @@ if "started" not in st.session_state:
         "resume_context": "",
         "started": False, 
         "level": "Internship",
-        "processed_audio": None  # New flag to prevent infinite transcribing
+        "processed_audio": None
     })
 
 # --- 4. HELPER FUNCTIONS ---
@@ -56,7 +56,7 @@ def transcribe_audio(audio_bytes):
         )
         return res
     except Exception as e:
-        return "" # Return empty on error to trigger "Speak Louder" logic
+        return ""
 
 def process_any_files(uploaded_files):
     s_text, r_text = "", ""
@@ -93,10 +93,11 @@ if st.session_state.started and api_key:
     c = st.session_state.curr
     data = st.session_state.session_data
 
-    # --- PHASE A: FINAL REPORT ---
+    # --- PHASE A: FINAL REPORT & REVIEWS ---
     if c >= len(data):
         st.header("📊 Performance Dashboard")
         
+        # 1. Bar Chart Analytics
         st.subheader("Skill Proficiency Breakdown")
         with st.spinner("Calculating metrics..."):
             summary_prompt = f"Analyze these results: {str(data)}. Output ONLY 4 numbers (1-10) separated by commas for: Technical, Communication, Confidence, Logic."
@@ -106,17 +107,14 @@ if st.session_state.started and api_key:
             except:
                 scores = [7, 7, 7, 7]
             
-            df_plot = pd.DataFrame({
-                "Skill Area": ['Technical', 'Communication', 'Confidence', 'Logic'],
-                "Score": scores
-            })
-            # Horizontal Bar Chart - Easier to explain!
+            df_plot = pd.DataFrame({"Skill Area": ['Technical', 'Communication', 'Confidence', 'Logic'], "Score": scores})
             fig = px.bar(df_plot, x='Score', y='Skill Area', orientation='h', color='Score', 
                          color_continuous_scale='RdYlGn', range_x=[0,10])
             st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
         
+        # 2. Results List
         for i, item in enumerate(data):
             if item["q"]:
                 with st.expander(f"Q{i+1}: {item['q'][:60]}..."):
@@ -128,6 +126,41 @@ if st.session_state.started and api_key:
                         st.warning("Skipped.")
                         res_sol = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": f"2-line answer for: {item['q']}"}])
                         st.success(f"**Expert Solution:** {res_sol.choices[0].message.content}")
+
+        st.divider()
+
+        # --- 3. THE REVIEW PART (Supabase Integration) ---
+        st.subheader("🌟 User Experience Review")
+        with st.form("feedback_loop"):
+            u_rating = st.select_slider("Rate AI Accuracy (1-5)", options=[1,2,3,4,5], value=5)
+            u_comments = st.text_area("Developer Note: What should I improve in the AI prompts?")
+            if st.form_submit_button("Submit to Cloud Database"):
+                if supabase_client:
+                    try:
+                        # Save to Supabase
+                        supabase_client.table("reviews").insert({
+                            "level": st.session_state.level, 
+                            "rating": u_rating, 
+                            "comment": u_comments
+                        }).execute()
+                        st.success("✅ Review saved permanently in the cloud!")
+                    except Exception as e:
+                        st.error(f"Database error: {e}")
+                else:
+                    st.warning("Database not connected. Please check your secrets.")
+
+        # --- 4. META-ANALYSIS (The Interviewer Wow Factor) ---
+        if st.checkbox("Show AI System Health Report"):
+            if supabase_client:
+                all_data = supabase_client.table("reviews").select("*").execute()
+                if all_data.data:
+                    comments = " ".join([r['comment'] for r in all_data.data if r['comment']])
+                    analysis = client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        messages=[{"role":"user","content":f"Analyze these user reviews and provide a 2-line summary of product health: {comments}"}]
+                    )
+                    st.write("### AI Product Manager Report")
+                    st.info(analysis.choices[0].message.content)
 
         if st.button("🔄 Restart"):
             st.session_state.started = False
@@ -147,33 +180,27 @@ if st.session_state.started and api_key:
         st.progress((c + 1) / len(data))
         st.subheader(data[c]["q"])
 
-        # --- VOICE LOGIC (IMPROVED) ---
+        # VOICE LOGIC
         audio_data = mic_recorder(start_prompt="🎤 Speak Answer", stop_prompt="🛑 Stop & Transcribe", key=f'mic_{c}')
-        
-        # Check if new audio was just recorded
         if audio_data and st.session_state.processed_audio != audio_data['id']:
             with st.spinner("Transcribing..."):
                 transcript = transcribe_audio(audio_data['bytes'])
-                
-                # Validation Logic: If too short, ask to speak again
                 if len(transcript.strip()) < 5:
-                    st.error("⚠️ Speak louder and clearer! The AI couldn't hear you.")
+                    st.error("⚠️ Speak louder and clearer!")
                 else:
                     data[c]["a"] = transcript
-                    st.session_state.processed_audio = audio_data['id'] # Mark this ID as done
+                    st.session_state.processed_audio = audio_data['id']
                     st.rerun()
 
-        # Text Area synced to transcript
         ans_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_input_{c}", height=120)
         data[c]["a"] = ans_input
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            if st.button("⬅️ Previous") and c > 0:
-                st.session_state.curr -= 1; st.rerun()
+            if st.button("⬅️ Previous") and c > 0: st.session_state.curr -= 1; st.rerun()
         with col2:
             if st.button("💡 Hint"):
-                res_h = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"7-word technical hint for: {data[c]['q']}"}])
+                res_h = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"7-word hint for: {data[c]['q']}"}])
                 data[c]["hint"] = res_h.choices[0].message.content; st.rerun()
         with col3:
             if st.button("Next ➡️"):
