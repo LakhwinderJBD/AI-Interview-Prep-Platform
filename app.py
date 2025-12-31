@@ -7,7 +7,7 @@ import os
 import re
 from streamlit_mic_recorder import mic_recorder
 from supabase import create_client, Client
-from fpdf import FPDF
+from fpdf import FPDF # modern fpdf2 library
 
 # --- 1. PAGE CONFIG ---
 st.set_page_config(page_title="AI Career Master Pro", page_icon="🎙️", layout="centered")
@@ -42,26 +42,51 @@ if "started" not in st.session_state:
 
 # --- 4. HELPER FUNCTIONS ---
 
+# Function to remove characters that break PDF generation
+def clean_text(text):
+    if not text:
+        return ""
+    # Replace common unicode characters with standard ones
+    replacements = {
+        '\u201c': '"', '\u201d': '"',  # Smart quotes
+        '\u2018': "'", '\u2019': "'",  # Smart apostrophes
+        '\u2013': "-", '\u2014': "-",  # Dashes
+        '\u2022': "*",                  # Bullets
+    }
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
+    # Remove any remaining non-latin1 characters (like emojis) to prevent crash
+    return text.encode('latin-1', 'ignore').decode('latin-1')
+
 def generate_pdf_report(data):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
     pdf.cell(200, 10, txt="Interview Performance Report", ln=True, align='C')
     pdf.ln(10)
+    
     for i, item in enumerate(data):
         if item["q"]:
             pdf.set_font("Arial", "B", 12)
-            pdf.multi_cell(0, 10, txt=f"Q{i+1}: {item['q']}")
+            # We clean every piece of text before writing to PDF
+            q_text = clean_text(f"Q{i+1}: {item['q']}")
+            pdf.multi_cell(0, 10, txt=q_text)
+            
             pdf.set_font("Arial", "", 11)
-            pdf.multi_cell(0, 10, txt=f"Your Answer: {item['a'] if item['a'] else 'Skipped'}")
+            ans_text = clean_text(f"Your Answer: {item['a'] if item['a'] else 'Skipped'}")
+            pdf.multi_cell(0, 10, txt=ans_text)
+            
             if item['eval']:
                 pdf.set_text_color(0, 50, 150)
-                pdf.multi_cell(0, 10, txt=f"Feedback: {item['eval']}")
+                eval_text = clean_text(f"Feedback: {item['eval']}")
+                pdf.multi_cell(0, 10, txt=eval_text)
                 pdf.set_text_color(0, 0, 0)
             pdf.ln(5)
-            pdf.cell(0, 0, "", "T")
+            pdf.line(10, pdf.get_y(), 200, pdf.get_y())
             pdf.ln(5)
-    return pdf.output(dest='S').encode('latin-1')
+            
+    # Output as bytes for Streamlit download
+    return pdf.output()
 
 def transcribe_audio(audio_bytes):
     try:
@@ -73,30 +98,22 @@ def transcribe_audio(audio_bytes):
     except:
         return ""
 
-# IMPROVED PDF PROCESSOR FOR MOBILE
 def process_any_files(uploaded_files):
     s_text, r_text = "", ""
     for file in uploaded_files:
         try:
-            # Read bytes directly (important for mobile streams)
             pdf_reader = PyPDF2.PdfReader(io.BytesIO(file.read()))
             text = ""
             for page in pdf_reader.pages:
                 extracted = page.extract_text()
-                if extracted:
-                    text += extracted
-            
-            # Warning for scanned PDFs (Images)
-            if len(text.strip()) < 20:
-                st.sidebar.warning(f"⚠️ {file.name} looks like a scan/image. AI might struggle to read it.")
+                if extracted: text += extracted
             
             if any(word in file.name.lower() for word in ["resume", "cv"]):
                 r_text += f"\n[Resume: {file.name}]\n{text}"
             else:
                 s_text += f"\n[Study: {file.name}]\n{text}"
-        except Exception as e:
+        except:
             st.sidebar.error(f"Error reading {file.name}")
-            
     return s_text[:12000], r_text[:4000]
 
 # --- 5. SIDEBAR: SETUP ---
@@ -125,8 +142,19 @@ if st.session_state.started and api_key:
 
     if c >= len(data):
         st.header("📊 Final Performance Report")
-        pdf_data = generate_pdf_report(data)
-        st.download_button(label="📥 Download Results as PDF", data=pdf_data, file_name="Interview_Report.pdf", mime="application/pdf")
+        
+        # FIX: The generate_pdf_report now handles clean text
+        try:
+            pdf_bytes = generate_pdf_report(data)
+            st.download_button(
+                label="📥 Download Results as PDF", 
+                data=pdf_bytes, 
+                file_name="Interview_Report.pdf", 
+                mime="application/pdf"
+            )
+        except Exception as e:
+            st.error(f"PDF Error: {e}. You can still see your results below.")
+            
         st.divider()
         
         for i, item in enumerate(data):
@@ -157,7 +185,7 @@ if st.session_state.started and api_key:
         if data[c]["q"] is None:
             with st.spinner("🤖 Thinking..."):
                 use_resume = (random.random() < 0.7) if st.session_state.level == "Job" else (random.random() < 0.3)
-                q_sys = f"You are a {st.session_state.level} interviewer. Ask ONE question. No preamble."
+                q_sys = f"You are an expert interviewer. Ask ONE {st.session_state.level} level question. No preamble."
                 u_content = f"RESUME: {st.session_state.resume_context}\nNOTES: {st.session_state.study_context}"
                 res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "system", "content": q_sys}, {"role": "user", "content": u_content}])
                 data[c]["q"] = res.choices[0].message.content
@@ -166,22 +194,17 @@ if st.session_state.started and api_key:
         st.progress((c + 1) / len(data))
         st.subheader(data[c]["q"])
 
-        # --- 🎤 VOICE LOGIC FIX ---
         audio_data = mic_recorder(start_prompt="🎤 Speak Answer", stop_prompt="🛑 Stop & Transcribe", key=f'mic_{c}')
         
         if audio_data and st.session_state.last_audio_id != audio_data['id']:
             with st.spinner("Transcribing..."):
                 transcript = transcribe_audio(audio_data['bytes'])
                 if transcript.strip():
-                    # Sync to both text area state and data object
                     data[c]["a"] = transcript
                     st.session_state[f"ans_input_{c}"] = transcript 
                     st.session_state.last_audio_id = audio_data['id']
                     st.rerun()
-                else:
-                    st.error("⚠️ I couldn't hear you. Please speak louder and clear.")
 
-        # Text Area with internal state syncing
         ans_key = f"ans_input_{c}"
         if ans_key not in st.session_state:
             st.session_state[ans_key] = data[c]["a"]
@@ -212,4 +235,4 @@ if st.session_state.started and api_key:
 
 else:
     st.title("🎯 AI Career Master Pro")
-    st.write("Professional Interview Platform. Supports Voice, Mobile PDFs, and Resume context.")
+    st.write("Professional Interview Platform. Voice, Mobile PDFs, and Resume context supported.")
