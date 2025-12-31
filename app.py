@@ -42,51 +42,45 @@ if "started" not in st.session_state:
 
 # --- 4. HELPER FUNCTIONS ---
 
-# Function to remove characters that break PDF generation
-def clean_text(text):
-    if not text:
-        return ""
-    # Replace common unicode characters with standard ones
+def clean_for_pdf(text):
+    """Replaces Unicode characters that break standard PDF fonts."""
+    if not text: return ""
     replacements = {
-        '\u201c': '"', '\u201d': '"',  # Smart quotes
-        '\u2018': "'", '\u2019': "'",  # Smart apostrophes
-        '\u2013': "-", '\u2014': "-",  # Dashes
-        '\u2022': "*",                  # Bullets
+        '\u2013': '-', '\u2014': '-', '\u2018': "'", '\u2019': "'",
+        '\u201c': '"', '\u201d': '"', '\u2022': '*', '\u2026': '...'
     }
-    for char, replacement in replacements.items():
-        text = text.replace(char, replacement)
-    # Remove any remaining non-latin1 characters (like emojis) to prevent crash
+    for search, replace in replacements.items():
+        text = text.replace(search, replace)
+    # Remove emojis or other characters that can't be encoded in Latin-1
     return text.encode('latin-1', 'ignore').decode('latin-1')
 
 def generate_pdf_report(data):
+    # fpdf2 is used here
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(200, 10, txt="Interview Performance Report", ln=True, align='C')
+    pdf.set_font("helvetica", "B", 16)
+    pdf.cell(0, 10, txt="Interview Performance Report", ln=True, align='C')
     pdf.ln(10)
     
     for i, item in enumerate(data):
         if item["q"]:
-            pdf.set_font("Arial", "B", 12)
-            # We clean every piece of text before writing to PDF
-            q_text = clean_text(f"Q{i+1}: {item['q']}")
-            pdf.multi_cell(0, 10, txt=q_text)
+            pdf.set_font("helvetica", "B", 12)
+            pdf.multi_cell(0, 10, txt=clean_for_pdf(f"Question {i+1}: {item['q']}"))
             
-            pdf.set_font("Arial", "", 11)
-            ans_text = clean_text(f"Your Answer: {item['a'] if item['a'] else 'Skipped'}")
-            pdf.multi_cell(0, 10, txt=ans_text)
+            pdf.set_font("helvetica", "", 11)
+            ans = item['a'] if item['a'] else "Skipped"
+            pdf.multi_cell(0, 8, txt=clean_for_pdf(f"Your Answer: {ans}"))
             
             if item['eval']:
                 pdf.set_text_color(0, 50, 150)
-                eval_text = clean_text(f"Feedback: {item['eval']}")
-                pdf.multi_cell(0, 10, txt=eval_text)
+                pdf.multi_cell(0, 8, txt=clean_for_pdf(f"AI Feedback: {item['eval']}"))
                 pdf.set_text_color(0, 0, 0)
+            
             pdf.ln(5)
             pdf.line(10, pdf.get_y(), 200, pdf.get_y())
             pdf.ln(5)
             
-    # Output as bytes for Streamlit download
-    return pdf.output()
+    return pdf.output() # In fpdf2, output() returns bytes by default for streaming
 
 def transcribe_audio(audio_bytes):
     try:
@@ -95,25 +89,19 @@ def transcribe_audio(audio_bytes):
         audio_file.name = "audio.wav"
         res = client.audio.transcriptions.create(file=audio_file, model="whisper-large-v3", response_format="text")
         return res
-    except:
-        return ""
+    except: return ""
 
 def process_any_files(uploaded_files):
     s_text, r_text = "", ""
     for file in uploaded_files:
         try:
             pdf_reader = PyPDF2.PdfReader(io.BytesIO(file.read()))
-            text = ""
-            for page in pdf_reader.pages:
-                extracted = page.extract_text()
-                if extracted: text += extracted
-            
+            text = "".join([p.extract_text() for p in pdf_reader.pages])
             if any(word in file.name.lower() for word in ["resume", "cv"]):
                 r_text += f"\n[Resume: {file.name}]\n{text}"
             else:
                 s_text += f"\n[Study: {file.name}]\n{text}"
-        except:
-            st.sidebar.error(f"Error reading {file.name}")
+        except: st.sidebar.error(f"Error reading {file.name}")
     return s_text[:12000], r_text[:4000]
 
 # --- 5. SIDEBAR: SETUP ---
@@ -121,11 +109,11 @@ with st.sidebar:
     st.title("⚙️ System Setup")
     level = st.selectbox("Interview Level", ["Internship", "Job"])
     num_q = st.number_input("Number of Questions", min_value=1, max_value=20, value=3)
-    all_files = st.file_uploader("Upload PDFs", type="pdf", accept_multiple_files=True)
+    all_files = st.file_uploader("Upload PDFs (Notes + Resume)", type="pdf", accept_multiple_files=True)
     
     if st.button("🚀 Start Interview"):
         if api_key and all_files:
-            with st.spinner("Processing files..."):
+            with st.spinner("Preparing materials..."):
                 study, resume = process_any_files(all_files)
                 st.session_state.update({
                     "study_context": study, "resume_context": resume,
@@ -143,18 +131,18 @@ if st.session_state.started and api_key:
     if c >= len(data):
         st.header("📊 Final Performance Report")
         
-        # FIX: The generate_pdf_report now handles clean text
+        # DOWNLOAD SECTION
         try:
-            pdf_bytes = generate_pdf_report(data)
+            pdf_output = generate_pdf_report(data)
             st.download_button(
-                label="📥 Download Results as PDF", 
-                data=pdf_bytes, 
-                file_name="Interview_Report.pdf", 
+                label="📥 Download Report as PDF",
+                data=pdf_output,
+                file_name="Interview_Results.pdf",
                 mime="application/pdf"
             )
         except Exception as e:
-            st.error(f"PDF Error: {e}. You can still see your results below.")
-            
+            st.error(f"Could not generate PDF: {e}")
+
         st.divider()
         
         for i, item in enumerate(data):
@@ -163,7 +151,7 @@ if st.session_state.started and api_key:
                     st.write(f"**Q:** {item['q']}")
                     if item['a']:
                         if not item['eval']:
-                            res_e = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Score 1-10 & Feedback: Q: {item['q']} A: {item['a']}"}])
+                            res_e = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"2-line feedback for Q: {item['q']} A: {item['a']}"}])
                             item['eval'] = res_e.choices[0].message.content
                         st.info(item['eval'])
                     else:
@@ -185,7 +173,7 @@ if st.session_state.started and api_key:
         if data[c]["q"] is None:
             with st.spinner("🤖 Thinking..."):
                 use_resume = (random.random() < 0.7) if st.session_state.level == "Job" else (random.random() < 0.3)
-                q_sys = f"You are an expert interviewer. Ask ONE {st.session_state.level} level question. No preamble."
+                q_sys = f"You are a expert interviewer. Ask ONE {st.session_state.level} level question. No preamble."
                 u_content = f"RESUME: {st.session_state.resume_context}\nNOTES: {st.session_state.study_context}"
                 res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "system", "content": q_sys}, {"role": "user", "content": u_content}])
                 data[c]["q"] = res.choices[0].message.content
@@ -194,8 +182,8 @@ if st.session_state.started and api_key:
         st.progress((c + 1) / len(data))
         st.subheader(data[c]["q"])
 
+        # VOICE LOGIC
         audio_data = mic_recorder(start_prompt="🎤 Speak Answer", stop_prompt="🛑 Stop & Transcribe", key=f'mic_{c}')
-        
         if audio_data and st.session_state.last_audio_id != audio_data['id']:
             with st.spinner("Transcribing..."):
                 transcript = transcribe_audio(audio_data['bytes'])
@@ -205,6 +193,7 @@ if st.session_state.started and api_key:
                     st.session_state.last_audio_id = audio_data['id']
                     st.rerun()
 
+        # Text Area synced to Voice
         ans_key = f"ans_input_{c}"
         if ans_key not in st.session_state:
             st.session_state[ans_key] = data[c]["a"]
