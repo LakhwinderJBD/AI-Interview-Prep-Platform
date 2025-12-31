@@ -1,6 +1,6 @@
 streamlit
 groq
-PyPDF2
+PyPDF
 streamlit-mic-recorder
 supabase
-fpdf2
+fpdf
