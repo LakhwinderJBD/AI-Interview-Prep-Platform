@@ -2,20 +2,20 @@ import streamlit as st
 from groq import Groq
 import PyPDF2
 import random
-import io
 import os
 import re
-from streamlit_mic_recorder import mic_recorder
+import pandas as pd
 from supabase import create_client, Client
-from fpdf import FPDF 
 
-# --- 1. PAGE CONFIG ---
-st.set_page_config(page_title="AI Career Master Pro", page_icon="🎙️", layout="centered")
+# --- 1. PAGE CONFIG & MATH STYLING ---
+st.set_page_config(page_title="AI Career Master", page_icon="🎯", layout="centered")
 
+# Custom CSS for a professional look
 st.markdown("""
     <style>
     .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; }
-    .report-card { background-color: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #eee; margin-bottom: 20px; }
+    .stTextArea>div>div>textarea { font-size: 16px; }
+    .report-card { background-color: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #eee; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -34,200 +34,163 @@ else:
 # --- 3. SESSION STATE ---
 if "started" not in st.session_state:
     st.session_state.update({
-        "curr": 0, "session_data": [],
-        "study_context": "", "resume_context": "",
-        "started": False, "level": "Internship",
-        "last_audio_id": None
+        "curr": 0, 
+        "session_data": [],
+        "study_context": "", 
+        "resume_context": "",
+        "started": False, 
+        "level": "Internship"
     })
 
-# --- 4. HELPER FUNCTIONS ---
-
-def clean_text(text):
-    """Replaces non-Latin-1 characters (emojis, smart quotes) to prevent PDF crashes."""
-    if not text: return ""
-    # Map of common problematic unicode characters to standard ones
-    rep = {
-        '\u201c': '"', '\u201d': '"',  # Smart double quotes
-        '\u2018': "'", '\u2019': "'",  # Smart single quotes
-        '\u2013': '-', '\u2014': '-',  # Em dashes
-        '\u2022': '*', '\u2026': '...', # Bullets and Ellipsis
-    }
-    for search, replace in rep.items():
-        text = text.replace(search, replace)
-    # Remove any remaining characters that can't be encoded in Latin-1 (like emojis)
-    return text.encode('latin-1', 'ignore').decode('latin-1')
-
-def generate_pdf_report(data):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("helvetica", "B", 16)
-    pdf.cell(0, 10, txt="Interview Performance Report", ln=True, align='C')
-    pdf.ln(10)
-    
-    for i, item in enumerate(data):
-        if item["q"]:
-            # Clean all strings before putting them in the PDF
-            q_clean = clean_text(f"Question {i+1}: {item['q']}")
-            a_clean = clean_text(f"Your Answer: {item['a'] if item['a'] else 'Skipped'}")
-            e_clean = clean_text(f"Feedback: {item['eval']}") if item['eval'] else ""
-
-            pdf.set_font("helvetica", "B", 12)
-            pdf.multi_cell(0, 10, txt=q_clean)
-            
-            pdf.set_font("helvetica", "", 11)
-            pdf.multi_cell(0, 10, txt=a_clean)
-            
-            if e_clean:
-                pdf.set_text_color(0, 50, 150)
-                pdf.multi_cell(0, 10, txt=e_clean)
-                pdf.set_text_color(0, 0, 0)
-            
-            pdf.ln(5)
-            pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-            pdf.ln(5)
-    
-    # fpdf2 returns bytes directly with output()
-    return pdf.output()
-
-def transcribe_audio(audio_bytes):
-    try:
-        client = Groq(api_key=api_key)
-        audio_file = io.BytesIO(audio_bytes)
-        audio_file.name = "audio.wav"
-        res = client.audio.transcriptions.create(file=audio_file, model="whisper-large-v3", response_format="text")
-        return res
-    except: return ""
-
+# --- 4. DOCUMENT PROCESSOR ---
 def process_any_files(uploaded_files):
     s_text, r_text = "", ""
     for file in uploaded_files:
-        try:
-            pdf_reader = PyPDF2.PdfReader(io.BytesIO(file.read()))
-            text = "".join([p.extract_text() for p in pdf_reader.pages])
-            if any(word in file.name.lower() for word in ["resume", "cv"]):
-                r_text += f"\n[Resume: {file.name}]\n{text}"
-            else:
-                s_text += f"\n[Study: {file.name}]\n{text}"
-        except: st.sidebar.error(f"Error reading {file.name}")
-    return s_text[:12000], r_text[:4000]
+        reader = PyPDF2.PdfReader(file)
+        text = f"\n--- Source: {file.name} ---\n" + "".join([p.extract_text() for p in reader.pages])
+        if any(word in file.name.lower() for word in ["resume", "cv", "portfolio"]):
+            r_text += text
+        else:
+            s_text += text
+    return s_text[:12000], r_text[:5000]
 
 # --- 5. SIDEBAR: SETUP ---
 with st.sidebar:
     st.title("⚙️ System Setup")
+    if api_key: st.success("✅ API Key Active")
+    
     level = st.selectbox("Interview Level", ["Internship", "Job"])
     num_q = st.number_input("Number of Questions", min_value=1, max_value=20, value=3)
     all_files = st.file_uploader("Upload PDFs (Notes + Resume)", type="pdf", accept_multiple_files=True)
     
-    if st.button("🚀 Start Interview"):
+    if st.button("🚀 Start Personalized Interview"):
         if api_key and all_files:
-            with st.spinner("Preparing..."):
+            with st.spinner("Analyzing materials..."):
                 study, resume = process_any_files(all_files)
                 st.session_state.update({
-                    "study_context": study, "resume_context": resume,
+                    "study_context": study, 
+                    "resume_context": resume,
                     "session_data": [{"q": None, "a": "", "hint": None, "eval": None} for _ in range(num_q)],
-                    "curr": 0, "level": level, "started": True
+                    "curr": 0, 
+                    "level": level, 
+                    "started": True
                 })
                 st.rerun()
+        else:
+            st.error("Please provide API Key and upload documents.")
 
 # --- 6. MAIN INTERFACE ---
 if st.session_state.started and api_key:
     client = Groq(api_key=api_key)
     c = st.session_state.curr
     data = st.session_state.session_data
+    lvl = st.session_state.level
 
+    # --- PHASE A: FINAL REPORT & REVIEWS ---
     if c >= len(data):
         st.header("📊 Final Performance Report")
-        
-        # Safe PDF Generation
-        try:
-            pdf_bytes = generate_pdf_report(data)
-            st.download_button(
-                label="📥 Download Results as PDF",
-                data=pdf_bytes,
-                file_name="Interview_Report.pdf",
-                mime="application/pdf"
-            )
-        except Exception as e:
-            st.error(f"PDF creation failed locally, but your results are below! (Error: {e})")
-
+        st.write("Summary of your technical readiness:")
         st.divider()
         
         for i, item in enumerate(data):
             if item["q"]:
-                with st.expander(f"Question {i+1}"):
-                    st.write(f"**Q:** {item['q']}")
+                status = "✅ Answered" if item['a'] else "❌ Skipped"
+                with st.expander(f"Question {i+1} | {status}", expanded=True):
+                    # LaTeX Support for math in questions
+                    st.markdown(f"**Question:** {item['q']}")
+                    
                     if item['a']:
+                        st.write(f"**Your Answer:** {item['a']}")
                         if not item['eval']:
-                            res_e = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Score 1-10 & Feedback: Q: {item['q']} A: {item['a']}"}])
-                            item['eval'] = res_e.choices[0].message.content
+                            eval_res = client.chat.completions.create(
+                                model="llama-3.1-8b-instant", 
+                                messages=[{"role":"user","content":f"Exactly 2 lines. Line 1: Score 1-10 & Feedback. Line 2: Ideal Answer. Q: {item['q']} A: {item['a']}"}]
+                            )
+                            item['eval'] = eval_res.choices[0].message.content
                         st.info(item['eval'])
                     else:
-                        st.warning("Skipped.")
+                        # Auto-Generate Solution for skipped questions
+                        with st.spinner("Generating expert solution..."):
+                            res_sol = client.chat.completions.create(
+                                model="llama-3.1-8b-instant",
+                                messages=[{"role": "user", "content": f"Provide exactly 2 lines for the ideal answer to: {item['q']}. Use LaTeX for math if needed."}]
+                            )
+                            st.success(f"**Expert Ideal Answer:**\n{res_sol.choices[0].message.content}")
 
-        with st.form("feedback"):
-            u_rating = st.select_slider("Rate AI", options=[1,2,3,4,5], value=5)
-            u_comments = st.text_area("Feedback?")
+        st.divider()
+
+        # SUPABASE PERMANENT REVIEW
+        st.subheader("🌟 Submit Feedback to Developer")
+        with st.form("feedback_form"):
+            u_rating = st.select_slider("Rate AI Accuracy", options=[1, 2, 3, 4, 5], value=5)
+            u_comments = st.text_area("Developer Notes: Suggest improvements:")
             if st.form_submit_button("Submit to Cloud"):
                 if supabase_client:
-                    supabase_client.table("reviews").insert({"level": st.session_state.level, "rating": u_rating, "comment": u_comments}).execute()
-                    st.success("✅ Saved!")
+                    try:
+                        all_scores = re.findall(r'\b([1-9]|10)\b', str(data))
+                        avg_s = sum([int(s) for s in all_scores]) / len(all_scores) if all_scores else 0
+                        supabase_client.table("reviews").insert({
+                            "level": lvl, "rating": u_rating, "comment": u_comments, "avg_score": avg_s
+                        }).execute()
+                        st.success("✅ Saved to Master Database!")
+                    except Exception as e: st.error(f"Database Error: {e}")
+                else: st.warning("Database not connected.")
 
         if st.button("🔄 Start New Session"):
-            st.session_state.started = False
-            st.rerun()
+            st.session_state.started = False; st.rerun()
 
+    # --- PHASE B: ACTIVE INTERVIEW ---
     else:
+        # Question Generation with Math Support & Industry Weighting
         if data[c]["q"] is None:
-            with st.spinner("🤖 Thinking..."):
-                use_resume = (random.random() < 0.7) if st.session_state.level == "Job" else (random.random() < 0.3)
-                q_sys = f"You are an expert interviewer. Ask ONE {st.session_state.level} level question. No preamble."
-                u_content = f"RESUME: {st.session_state.resume_context}\nNOTES: {st.session_state.study_context}"
+            with st.spinner("🤖 AI is thinking..."):
+                asked = [item["q"] for item in data if item["q"]]
+                # 70% Notes/Math for Internship | 70% Projects for Job
+                use_resume = (random.random() < 0.7) if lvl == "Job" else (random.random() < 0.3)
+                
+                q_sys = f"""You are a {lvl} level interviewer. Ask ONE technical question.
+                CRITICAL: NO preamble. NO 'Here is your question'. Output ONLY the raw question.
+                If asking math/stats, use LaTeX format (e.g. $y = mx + b$). 
+                Do not repeat: {asked}."""
+                
+                u_content = f"RESUME: {st.session_state.resume_context}\nSTUDY NOTES: {st.session_state.study_context}"
                 res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "system", "content": q_sys}, {"role": "user", "content": u_content}])
                 data[c]["q"] = res.choices[0].message.content
                 st.rerun()
 
         st.progress((c + 1) / len(data))
-        st.subheader(data[c]["q"])
+        st.markdown(f"### {data[c]['q']}")
 
-        # VOICE LOGIC
-        audio_data = mic_recorder(start_prompt="🎤 Speak Answer", stop_prompt="🛑 Stop & Transcribe", key=f'mic_{c}')
-        if audio_data and st.session_state.last_audio_id != audio_data['id']:
-            with st.spinner("Transcribing..."):
-                transcript = transcribe_audio(audio_data['bytes'])
-                if transcript:
-                    data[c]["a"] = transcript
-                    st.session_state[f"ans_input_{c}"] = transcript
-                    st.session_state.last_audio_id = audio_data['id']
-                    st.rerun()
-
-        ans_key = f"ans_input_{c}"
-        if ans_key not in st.session_state:
-            st.session_state[ans_key] = data[c]["a"]
-
-        user_input = st.text_area("Your Answer:", value=st.session_state[ans_key], key=f"widget_{c}", height=150)
+        # Input Area
+        user_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=150, placeholder="Explain your answer clearly. You can use math notation if needed.")
         data[c]["a"] = user_input
-        st.session_state[ans_key] = user_input
 
+        # Navigation
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             if st.button("⬅️ Previous") and c > 0: st.session_state.curr -= 1; st.rerun()
         with col2:
             if st.button("💡 Hint"):
-                res_h = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"7-word hint for: {data[c]['q']}"}])
+                res_h = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"7-word technical hint for: {data[c]['q']}"}])
                 data[c]["hint"] = res_h.choices[0].message.content; st.rerun()
         with col3:
+            # Smart Next: Evaluate if answered, otherwise skip
             if st.button("Next ➡️"):
                 if data[c]["a"] and not data[c]["eval"]:
                     with st.spinner("Analyzing..."):
-                        res_e = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Q: {data[c]['q']} A: {data[c]['a']}. Give 2-line score and feedback."}])
+                        res_e = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Score 1-10 & 1-line feedback for Q: {data[c]['q']} A: {data[c]['a']}"}])
                         data[c]["eval"] = res_e.choices[0].message.content
                 st.session_state.curr += 1; st.rerun()
         with col4:
             if st.button("🏁 Finish"):
+                if data[c]["a"] and not data[c]["eval"]:
+                    res_e = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Score 1-10 & 1-line feedback for Q: {data[c]['q']} A: {data[c]['a']}"}])
+                    data[c]["eval"] = res_e.choices[0].message.content
                 st.session_state.curr = len(data); st.rerun()
 
         if data[c]["hint"]: st.warning(f"💡 {data[c]['hint']}")
 
 else:
-    st.title("🎯 AI Career Master")
-    st.write("Professional Interview Platform. Upload your materials to begin.")
+    st.title("🎯 AI Interview Coach")
+    st.write("Professional practice for Data Science and ML roles.")
+    st.info("Upload multiple PDFs (Syllabus, Resume, Books) in the sidebar to begin.")
