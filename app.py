@@ -119,7 +119,7 @@ if st.session_state.started and api_key:
         st.subheader("🌟 User Experience Review")
         with st.form("feedback_form"):
             u_rating = st.select_slider("Rate AI Performance (1-5)", options=[1,2,3,4,5], value=5)
-            u_comments = st.text_area("What should I improve in the AI prompts or logic?")
+            u_comments = st.text_area("Feedback?")
             if st.form_submit_button("Submit to Cloud Database"):
                 if supabase_client:
                     try:
