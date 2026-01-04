@@ -1,5 +1,7 @@
 streamlit
 groq
 PyPDF2
+streamlit-mic-recorder
 supabase
 pandas
+plotly
