@@ -40,7 +40,7 @@ if "started" not in st.session_state:
         "level": "Internship"
     })
 
-# --- 4. API HELPER WITH RETRY LOGIC (To avoid Rate Limit 429) ---
+# --- 4. API HELPER WITH RETRY LOGIC (Prevents Rate Limit Errors) ---
 def safe_groq_call(system_prompt, user_prompt):
     client = Groq(api_key=api_key)
     for attempt in range(3):
@@ -69,7 +69,6 @@ def process_files(uploaded_files):
             r_text += text
         else: 
             s_text += text
-    # Optimized context size to prevent token overflow
     return s_text[:6000], r_text[:3000]
 
 # --- 6. SIDEBAR: SETUP ---
@@ -85,7 +84,7 @@ with st.sidebar:
         if api_key and all_files:
             with st.spinner("Analyzing materials..."):
                 study, resume = process_files(all_files)
-                # Initialize all dictionary keys to prevent KeyError
+                # FIX: Initialize 'hint' and 'ideal' keys here to prevent KeyError
                 st.session_state.update({
                     "study_context": study, 
                     "resume_context": resume,
@@ -112,11 +111,11 @@ if st.session_state.started and api_key:
         st.divider()
         
         for i, item in enumerate(data):
-            if item["q"] is None: continue # Grabs only the questions you actually saw
+            if item["q"] is None: continue 
 
             status = "✅ Answered" if item['a'] else "❌ Skipped"
             with st.expander(f"Question {i+1} | {status}", expanded=True):
-                # Use markdown for LaTeX support
+                # Use markdown for LaTeX/Math support
                 st.markdown(f"**Question:** {item['q']}")
                 st.write(f"**Your Answer:** {item['a'] if item['a'] else 'No answer provided.'}")
                 
@@ -128,7 +127,7 @@ if st.session_state.started and api_key:
                             item['eval'] = safe_groq_call(e_sys, f"Q: {item['q']} A: {item['a']}")
                     st.info(f"**AI Feedback:**\n{item['eval']}")
                 
-                # 2. IDEAL ANSWER (Generated for BOTH answered and skipped)
+                # 2. THE IDEAL ANSWER (Generated for ALL encountered questions)
                 if not item['ideal']:
                     with st.spinner("Synthesizing interviewer's ideal answer..."):
                         sol_sys = "You are a senior technical lead. Provide a perfect 2-line answer. Use LaTeX ($) for math."
@@ -140,17 +139,16 @@ if st.session_state.started and api_key:
         st.subheader("🌟 Submit Feedback")
         with st.form("feedback_form"):
             u_rating = st.select_slider("Rate AI Accuracy", options=[1, 2, 3, 4, 5], value=5)
-            u_comments = st.text_area("Developer Notes: Suggest improvements:")
+            u_comments = st.text_area("Developer Notes / Suggestions:")
             if st.form_submit_button("Submit Review"):
                 if supabase_client:
                     try:
-                        # Extract average session score from data
                         all_scores = re.findall(r'\b([1-9]|10)\b', str(data))
                         avg_s = sum([int(s) for s in all_scores]) / len(all_scores) if all_scores else 0
                         supabase_client.table("reviews").insert({
                             "level": lvl, "rating": u_rating, "comment": u_comments, "avg_score": avg_s
                         }).execute()
-                        st.success("✅ Review saved permanently in the cloud!")
+                        st.success("✅ Saved to Master Database!")
                     except: st.error("Database connection error.")
 
         if st.button("🔄 Start New Session"):
@@ -158,7 +156,7 @@ if st.session_state.started and api_key:
 
     # --- PHASE B: ACTIVE INTERVIEW ---
     else:
-        # Generate Unique Question (Checked against past questions)
+        # Generate Unique Question
         if data[c]["q"] is None:
             with st.spinner("🤖 AI is thinking..."):
                 asked_list = [item["q"] for item in data if item["q"]]
@@ -177,16 +175,18 @@ if st.session_state.started and api_key:
         st.markdown(f"### {data[c]['q']}")
 
         # Answer Input
-        user_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=150, placeholder="Explain clearly. Use $ for math.")
+        user_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=150)
         data[c]["a"] = user_input
 
-        # Hint Logic
+        # Hint Logic (Safely uses .get to avoid KeyError)
         if st.button("💡 Get Hint"):
             with st.spinner(""):
                 h_sys = "Provide a 7-word technical hint. DO NOT give the answer."
                 data[c]["hint"] = safe_groq_call(h_sys, f"Question: {data[c]['q']}")
                 st.rerun()
-        if data[c].get("hint"): st.warning(f"💡 {data[c]['hint']}")
+        
+        if data[c].get("hint"): 
+            st.warning(f"💡 {data[c]['hint']}")
 
         # Navigation Controls
         col1, col2, col3 = st.columns(3)
@@ -194,19 +194,16 @@ if st.session_state.started and api_key:
             if st.button("⬅️ Previous") and c > 0: st.session_state.curr -= 1; st.rerun()
         with col2:
             if st.button("Next ➡️"):
-                # Evaluate if answered to save time later
                 if data[c]["a"] and not data[c]["eval"]:
-                    with st.spinner("Checking answer..."):
-                        data[c]["eval"] = safe_groq_call("Score 1-10 & 1-line feedback.", f"Q: {data[c]['q']} A: {data[c]['a']}")
+                    with st.spinner("Checking..."):
+                        data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback", f"Q: {data[c]['q']} A: {data[c]['a']}")
                 st.session_state.curr += 1; st.rerun()
         with col3:
             if st.button("🏁 Finish"):
-                # Safety evaluation for current question
                 if data[c]["a"] and not data[c]["eval"]:
                     data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback", f"Q: {data[c]['q']} A: {data[c]['a']}")
                 st.session_state.curr = len(data); st.rerun()
 
 else:
     st.title("🎯 AI Interview Coach")
-    st.write("Upload your materials to begin a personalized, text-based practice session.")
-    st.info("Now with full Math symbol support and Ideal Answer generation.")
+    st.write("Professional text-only practice with LaTeX math support. No Voice/PDF export for speed.")
