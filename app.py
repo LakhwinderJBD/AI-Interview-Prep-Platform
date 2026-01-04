@@ -6,7 +6,7 @@ import time
 import re
 from supabase import create_client, Client
 
-# --- 1. PAGE CONFIG & STYLING ---
+# --- 1. PAGE CONFIG ---
 st.set_page_config(page_title="AI Career Master", page_icon="🎯", layout="centered")
 
 st.markdown("""
@@ -31,12 +31,9 @@ else:
 # --- 3. SESSION STATE ---
 if "started" not in st.session_state:
     st.session_state.update({
-        "curr": 0, 
-        "session_data": [],
-        "study_context": "", 
-        "resume_context": "",
-        "started": False, 
-        "level": "Internship"
+        "curr": 0, "session_data": [],
+        "study_context": "", "resume_context": "",
+        "started": False, "level": "Internship"
     })
 
 # --- 4. API HELPER WITH RETRY LOGIC ---
@@ -103,23 +100,20 @@ if st.session_state.started and api_key:
             status = "✅ Attempted" if item['a'] else "❌ Skipped"
             with st.expander(f"Question {i+1} | {status}", expanded=True):
                 st.markdown(f"**Question:** {item['q']}")
-                
-                # Show User Answer
                 st.write(f"**Your Answer:** {item['a'] if item['a'] else 'No answer provided.'}")
                 
-                # Evaluation (Feedback)
                 if item['a']:
                     if not item['eval']:
                         item['eval'] = safe_groq_call("Score 1-10 & brief feedback.", f"Q: {item['q']} A: {item['a']}")
-                    st.info(f"**Interviewer Feedback:** {item['eval']}")
+                    st.info(f"**Feedback:** {item['eval']}")
                 
-                # Ideal Answer (Always generated for reference)
                 if not item['ideal']:
-                    with st.spinner("Generating ideal solution..."):
-                        item['ideal'] = safe_groq_call("Provide a perfect 2-line answer. Use LaTeX ($) for math.", f"Question: {item['q']}")
+                    with st.spinner(f"Generating ideal solution for Q{i+1}..."):
+                        sol_sys = "Provide exactly 2 lines of the ideal answer. Use LaTeX ($) for math."
+                        item['ideal'] = safe_groq_call(sol_sys, f"Question: {item['q']}")
                 st.success(f"**Interviewer's Ideal Answer:**\n\n{item['ideal']}")
 
-        # SUPABASE REVIEW
+        # REVIEW
         st.divider()
         with st.form("feedback"):
             u_rating = st.select_slider("AI Accuracy", options=[1,2,3,4,5], value=5)
@@ -129,29 +123,28 @@ if st.session_state.started and api_key:
                     try:
                         all_scores = re.findall(r'\b([1-9]|10)\b', str(data))
                         avg_s = sum([int(s) for s in all_scores]) / len(all_scores) if all_scores else 0
-                        supabase_client.table("reviews").insert({
-                            "level": lvl, "rating": u_rating, "comment": u_comments, "avg_score": avg_s
-                        }).execute()
+                        supabase_client.table("reviews").insert({"level": lvl, "rating": u_rating, "comment": u_comments, "avg_score": avg_s}).execute()
                         st.success("✅ Saved!")
                     except: pass
-
         if st.button("🔄 Restart Interview"):
             st.session_state.started = False; st.rerun()
 
     # --- PHASE B: ACTIVE INTERVIEW ---
     else:
-        # Generate Unique Question
+        # --- FIX: UNIQUE QUESTION GENERATION ---
         if data[c]["q"] is None:
             with st.spinner("🤖 Thinking..."):
-                # Get list of already asked questions to prevent repeats
+                # Format previously asked questions as a list to help AI avoid them
                 asked_questions = [item["q"] for item in data if item["q"]]
-                use_resume = (random.random() < 0.7) if lvl == "Job" else (random.random() < 0.3)
+                asked_str = "\n".join([f"- {q}" for q in asked_questions])
                 
-                q_sys = f"""You are a {lvl} level technical interviewer. 
-                Ask ONE specific technical question based on the documents.
-                CRITICAL: NO preamble. NO intro. Output ONLY the raw question.
-                Use LaTeX ($) for math symbols.
-                DO NOT repeat these questions: {asked_questions}."""
+                use_resume = (random.random() < 0.7) if lvl == "Job" else (random.random() < 0.3)
+                q_sys = f"""You are a technical interviewer. Ask ONE {lvl} level question. 
+                CRITICAL RULES:
+                1. NO preamble. Output ONLY the raw question.
+                2. Use LaTeX ($) for math symbols.
+                3. DO NOT repeat or ask anything similar to these questions:
+                {asked_str}"""
                 
                 u_content = f"RESUME: {st.session_state.resume_context}\nNOTES: {st.session_state.study_context}"
                 data[c]["q"] = safe_groq_call(q_sys, u_content)
@@ -160,19 +153,19 @@ if st.session_state.started and api_key:
         st.progress((c + 1) / len(data))
         st.markdown(f"### {data[c]['q']}")
 
-        # Answer Box
-        user_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=200, placeholder="Use $..$ for math symbols like $\mu$ or $\sigma$.")
+        # Answer Input
+        user_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=200, placeholder="Explain your answer clearly...")
         data[c]["a"] = user_input
 
-        # NAVIGATION
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("⬅️ Previous") and c > 0: st.session_state.curr -= 1; st.rerun()
         with col2:
+            # COMBINED NEXT LOGIC
             if st.button("Next ➡️"):
                 if data[c]["a"] and not data[c]["eval"]:
                     with st.spinner("Analyzing..."):
-                        data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback", f"Q: {data[c]['q']} A: {data[c]['a']}")
+                        data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback (2 lines).", f"Q: {data[c]['q']} A: {data[c]['a']}")
                 st.session_state.curr += 1; st.rerun()
         with col3:
             if st.button("🏁 Finish"):
@@ -180,16 +173,16 @@ if st.session_state.started and api_key:
                     data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback", f"Q: {data[c]['q']} A: {data[c]['a']}")
                 st.session_state.curr = len(data); st.rerun()
 
-        # HINT LOGIC (STRICT)
+        # --- FIX: SMART HINT LOGIC ---
         if st.button("💡 Get Hint"):
             with st.spinner(""):
-                # Very strict prompt for short hints
-                h_sys = "Provide a tiny nudge of MAX 7 WORDS. NEVER give the answer or explain the concept fully. Just a clue."
+                # We send the question AND context to ensure the hint is relevant
+                h_sys = """You are a coach. Provide a tiny nudge of MAX 7 WORDS. 
+                NEVER give the answer. Guide the user to find the answer based on the provided question."""
                 data[c]["hint"] = safe_groq_call(h_sys, f"Question: {data[c]['q']}")
                 st.rerun()
-        if data[c].get("hint"): 
-            st.warning(f"💡 Hint: {data[c]['hint']}")
+        if data[c].get("hint"): st.warning(f"💡 {data[c]['hint']}")
 
 else:
     st.title("🎯 AI Interview Coach")
-    st.write("Professional text-only practice for Internships. Math support included.")
+    st.write("Professional practice with Math support. Voice and PDF removed for speed.")
