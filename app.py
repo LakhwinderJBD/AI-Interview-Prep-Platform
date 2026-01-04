@@ -2,18 +2,20 @@ import streamlit as st
 from groq import Groq
 import PyPDF2
 import random
-import time
+import io
+import os
 import re
+import pandas as pd
+from streamlit_mic_recorder import mic_recorder
 from supabase import create_client, Client
 
-# --- 1. PAGE CONFIG & STYLING ---
-st.set_page_config(page_title="AI Career Master", page_icon="🎯", layout="centered")
+# --- 1. PAGE CONFIG ---
+st.set_page_config(page_title="AI Career Master", page_icon="🎙️", layout="centered")
 
 st.markdown("""
     <style>
     .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; }
-    .stTextArea>div>div>textarea { font-size: 16px; }
-    .report-card { background-color: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #eee; margin-bottom: 15px; }
+    .report-card { background-color: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #eee; margin-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -22,7 +24,8 @@ supabase_client = None
 if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
     try:
         supabase_client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
-    except: pass
+    except:
+        pass
 
 if "GROQ_API_KEY" in st.secrets:
     api_key = st.secrets["GROQ_API_KEY"]
@@ -37,173 +40,168 @@ if "started" not in st.session_state:
         "study_context": "", 
         "resume_context": "",
         "started": False, 
-        "level": "Internship"
+        "level": "Internship",
+        "last_audio_id": None # Track specific recording to avoid infinite loops
     })
 
-# --- 4. API HELPER WITH RETRY LOGIC (Prevents Rate Limit Errors) ---
-def safe_groq_call(system_prompt, user_prompt):
-    client = Groq(api_key=api_key)
-    for attempt in range(3):
-        try:
-            res = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[{"role": "system", "content": system_prompt},
-                          {"role": "user", "content": user_prompt}],
-                temperature=0.1
-            )
-            return res.choices[0].message.content
-        except Exception as e:
-            if "429" in str(e):
-                time.sleep(3) # Wait for rate limit reset
-            else:
-                return f"AI Busy: {str(e)}"
-    return "Error: API Rate Limit exceeded. Please try again."
+# --- 4. HELPER FUNCTIONS ---
+def transcribe_audio(audio_bytes):
+    try:
+        client = Groq(api_key=api_key)
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = "audio.wav"
+        res = client.audio.transcriptions.create(
+            file=audio_file, model="whisper-large-v3", response_format="text"
+        )
+        return res
+    except Exception:
+        return ""
 
-# --- 5. DOCUMENT PROCESSOR ---
-def process_files(uploaded_files):
+def process_any_files(uploaded_files):
     s_text, r_text = "", ""
     for file in uploaded_files:
         reader = PyPDF2.PdfReader(file)
-        text = "".join([p.extract_text() for p in reader.pages])
-        if any(word in file.name.lower() for word in ["resume", "cv", "portfolio"]): 
+        text = f"\n--- Source: {file.name} ---\n" + "".join([p.extract_text() for p in reader.pages])
+        if any(word in file.name.lower() for word in ["resume", "cv"]):
             r_text += text
-        else: 
+        else:
             s_text += text
-    return s_text[:6000], r_text[:3000]
+    return s_text[:10000], r_text[:5000]
 
-# --- 6. SIDEBAR: SETUP ---
+# --- 5. SIDEBAR: SETUP ---
 with st.sidebar:
     st.title("⚙️ System Setup")
-    if api_key: st.success("✅ API Key Active")
-    
     level = st.selectbox("Interview Level", ["Internship", "Job"])
-    num_q = st.number_input("Total Questions Planned", min_value=1, max_value=20, value=5)
+    num_q = st.number_input("Number of Questions", min_value=1, max_value=20, value=3)
     all_files = st.file_uploader("Upload PDFs (Notes + Resume)", type="pdf", accept_multiple_files=True)
     
-    if st.button("🚀 Start Personalized Interview"):
+    if st.button("🚀 Start Interview"):
         if api_key and all_files:
-            with st.spinner("Analyzing materials..."):
-                study, resume = process_files(all_files)
-                # FIX: Initialize 'hint' and 'ideal' keys here to prevent KeyError
+            with st.spinner("Preparing..."):
+                study, resume = process_any_files(all_files)
                 st.session_state.update({
-                    "study_context": study, 
-                    "resume_context": resume,
-                    "session_data": [{"q": None, "a": "", "eval": None, "ideal": None, "hint": None} for _ in range(num_q)],
-                    "curr": 0, 
-                    "level": level, 
-                    "started": True
+                    "study_context": study, "resume_context": resume,
+                    "session_data": [{"q": None, "a": "", "hint": None, "eval": None} for _ in range(num_q)],
+                    "curr": 0, "level": level, "started": True
                 })
                 st.rerun()
-        else:
-            st.error("Please provide API Key and upload documents.")
 
-# --- 7. MAIN INTERFACE ---
+# --- 6. MAIN INTERFACE ---
 if st.session_state.started and api_key:
     client = Groq(api_key=api_key)
     c = st.session_state.curr
     data = st.session_state.session_data
-    lvl = st.session_state.level
 
-    # --- PHASE A: FINAL REPORT ---
+    # --- PHASE A: FINAL REPORT & REVIEWS ---
     if c >= len(data):
         st.header("📊 Final Performance Report")
-        st.write("Complete analysis of your session. (Questions not reached were hidden).")
+        st.write("Summary of your session:")
         st.divider()
         
+        # Display Results
         for i, item in enumerate(data):
-            if item["q"] is None: continue 
+            if item["q"]:
+                with st.expander(f"Question {i+1} | {'✅ Answered' if item['a'] else '❌ Skipped'}"):
+                    st.write(f"**Question:** {item['q']}")
+                    if item['a']:
+                        if not item['eval']:
+                            res_e = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Score 1-10 & Feedback: Q: {item['q']} A: {item['a']}"}])
+                            item['eval'] = res_e.choices[0].message.content
+                        st.info(item['eval'])
+                    else:
+                        st.warning("Question was skipped.")
+                        res_sol = client.chat.get_completions = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": f"2-line answer for: {item['q']}"}])
+                        st.success(f"**Ideal Answer:** {res_sol.choices[0].message.content}")
 
-            status = "✅ Answered" if item['a'] else "❌ Skipped"
-            with st.expander(f"Question {i+1} | {status}", expanded=True):
-                # Use markdown for LaTeX/Math support
-                st.markdown(f"**Question:** {item['q']}")
-                st.write(f"**Your Answer:** {item['a'] if item['a'] else 'No answer provided.'}")
-                
-                # 1. EVALUATION (Score/Feedback)
-                if item['a']:
-                    if not item['eval']:
-                        with st.spinner("Grading..."):
-                            e_sys = "You are a recruiter. Give Score (1-10) and 1-sentence feedback. Be brief."
-                            item['eval'] = safe_groq_call(e_sys, f"Q: {item['q']} A: {item['a']}")
-                    st.info(f"**AI Feedback:**\n{item['eval']}")
-                
-                # 2. THE IDEAL ANSWER (Generated for ALL encountered questions)
-                if not item['ideal']:
-                    with st.spinner("Synthesizing interviewer's ideal answer..."):
-                        sol_sys = "You are a senior technical lead. Provide a perfect 2-line answer. Use LaTeX ($) for math."
-                        item['ideal'] = safe_groq_call(sol_sys, f"Question: {item['q']}")
-                st.success(f"**Interviewer's Ideal Answer:**\n\n{item['ideal']}")
-
-        # SUPABASE REVIEWS
         st.divider()
-        st.subheader("🌟 Submit Feedback")
+
+        # --- UPDATED REVIEW SYSTEM (Supabase) ---
+        st.subheader("🌟 User Experience Review")
         with st.form("feedback_form"):
-            u_rating = st.select_slider("Rate AI Accuracy", options=[1, 2, 3, 4, 5], value=5)
-            u_comments = st.text_area("Developer Notes / Suggestions:")
-            if st.form_submit_button("Submit Review"):
+            u_rating = st.select_slider("Rate AI Performance (1-5)", options=[1,2,3,4,5], value=5)
+            u_comments = st.text_area("What should I improve in the AI prompts or logic?")
+            if st.form_submit_button("Submit to Cloud Database"):
                 if supabase_client:
                     try:
+                        # Extract digits to calculate an average score from evaluation text
                         all_scores = re.findall(r'\b([1-9]|10)\b', str(data))
-                        avg_s = sum([int(s) for s in all_scores]) / len(all_scores) if all_scores else 0
+                        avg_val = sum([int(s) for s in all_scores]) / len(all_scores) if all_scores else 0
+                        
                         supabase_client.table("reviews").insert({
-                            "level": lvl, "rating": u_rating, "comment": u_comments, "avg_score": avg_s
+                            "level": st.session_state.level, 
+                            "rating": u_rating, 
+                            "comment": u_comments,
+                            "avg_score": avg_val
                         }).execute()
-                        st.success("✅ Saved to Master Database!")
-                    except: st.error("Database connection error.")
+                        st.success("✅ Review saved permanently in Supabase cloud!")
+                    except Exception as e:
+                        st.error(f"Database error: {e}")
+                else:
+                    st.warning("Supabase not connected. Check your Secrets.")
 
         if st.button("🔄 Start New Session"):
-            st.session_state.started = False; st.rerun()
+            st.session_state.started = False
+            st.rerun()
 
     # --- PHASE B: ACTIVE INTERVIEW ---
     else:
-        # Generate Unique Question
         if data[c]["q"] is None:
-            with st.spinner("🤖 AI is thinking..."):
-                asked_list = [item["q"] for item in data if item["q"]]
-                use_resume = (random.random() < 0.7) if lvl == "Job" else (random.random() < 0.3)
-                
-                q_sys = f"""You are a technical interviewer. Ask ONE {lvl} level question.
-                CRITICAL: No preamble. Output ONLY the raw question.
-                If asking math/stats, use LaTeX format (e.g. $y = mx + b$). 
-                Do not repeat: {asked_list}."""
-                
+            with st.spinner("🤖 Thinking..."):
+                use_resume = (random.random() < 0.7) if st.session_state.level == "Job" else (random.random() < 0.3)
+                q_sys = f"You are a {st.session_state.level} level interviewer. Ask ONE tech question from text. No preamble."
                 u_content = f"RESUME: {st.session_state.resume_context}\nNOTES: {st.session_state.study_context}"
-                data[c]["q"] = safe_groq_call(q_sys, u_content)
+                res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "system", "content": q_sys}, {"role": "user", "content": u_content}])
+                data[c]["q"] = res.choices[0].message.content
                 st.rerun()
 
         st.progress((c + 1) / len(data))
-        st.markdown(f"### {data[c]['q']}")
+        st.subheader(data[c]["q"])
 
-        # Answer Input
-        user_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=150)
-        data[c]["a"] = user_input
-
-        # Hint Logic (Safely uses .get to avoid KeyError)
-        if st.button("💡 Get Hint"):
-            with st.spinner(""):
-                h_sys = "Provide a 7-word technical hint. DO NOT give the answer."
-                data[c]["hint"] = safe_groq_call(h_sys, f"Question: {data[c]['q']}")
-                st.rerun()
+        # --- FIXED VOICE LOGIC ---
+        audio_data = mic_recorder(start_prompt="🎤 Speak Answer", stop_prompt="🛑 Stop & Transcribe", key=f'mic_{c}')
         
-        if data[c].get("hint"): 
-            st.warning(f"💡 {data[c]['hint']}")
+        if audio_data and st.session_state.last_audio_id != audio_data['id']:
+            with st.spinner("Transcribing..."):
+                transcript = transcribe_audio(audio_data['bytes'])
+                if len(transcript.strip()) < 5:
+                    st.warning("⚠️ Speak louder and clearer, I couldn't understand that!")
+                else:
+                    data[c]["a"] = transcript
+                    st.session_state.last_audio_id = audio_data['id']
+                    st.rerun()
 
-        # Navigation Controls
-        col1, col2, col3 = st.columns(3)
+        # Input Area
+        ans_box = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_input_{c}", height=150)
+        data[c]["a"] = ans_box
+
+        # --- NAVIGATION ---
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            if st.button("⬅️ Previous") and c > 0: st.session_state.curr -= 1; st.rerun()
+            if st.button("⬅️ Previous") and c > 0:
+                st.session_state.curr -= 1; st.rerun()
         with col2:
+            if st.button("💡 Hint"):
+                res_h = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"7-word hint for: {data[c]['q']}"}])
+                data[c]["hint"] = res_h.choices[0].message.content; st.rerun()
+        with col3:
+            # Combined Next Logic
             if st.button("Next ➡️"):
                 if data[c]["a"] and not data[c]["eval"]:
-                    with st.spinner("Checking..."):
-                        data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback", f"Q: {data[c]['q']} A: {data[c]['a']}")
+                    with st.spinner("Analyzing..."):
+                        e_sys = "Exactly 2 lines. Score 1-10 & Feedback + Ideal Answer."
+                        res_e = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Q: {data[c]['q']} A: {data[c]['a']}\n{e_sys}"}])
+                        data[c]["eval"] = res_e.choices[0].message.content
                 st.session_state.curr += 1; st.rerun()
-        with col3:
+        with col4:
             if st.button("🏁 Finish"):
+                # Evaluate last question before finishing
                 if data[c]["a"] and not data[c]["eval"]:
-                    data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback", f"Q: {data[c]['q']} A: {data[c]['a']}")
+                    res_e = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":f"Q: {data[c]['q']} A: {data[c]['a']}"}])
+                    data[c]["eval"] = res_e.choices[0].message.content
                 st.session_state.curr = len(data); st.rerun()
 
+        if data[c]["hint"]: st.warning(f"💡 {data[c]['hint']}")
+
 else:
-    st.title("🎯 AI Interview Coach")
-    st.write("Professional text-only practice with LaTeX math support. No Voice/PDF export for speed.")
+    st.title("🎯 AI Career Master")
+    st.write("Voice, Resume, and Multi-Doc supported. Practice smarter.")
