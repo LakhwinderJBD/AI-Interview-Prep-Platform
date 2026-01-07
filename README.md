@@ -1,58 +1,61 @@
-# 🎯 AI Career Master: Intelligent Multimodal Interview Prep
+# 🎯 AI Career Master: Intelligent Interview Simulator
 
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_svg.svg)](https://ai-interview-prep-platform-cwps9szn55ybmqtga6wden.streamlit.app/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Groq AI](https://img.shields.io/badge/AI-Groq%20LPU-orange)](https://groq.com/)
 [![Supabase](https://img.shields.io/badge/Database-Supabase-green)](https://supabase.com/)
 
-**AI Career Master** is a high-fidelity interview simulation platform that utilizes **Retrieval-Augmented Generation (RAG)** and **Multimodal Speech Processing** to create a personalized prep experience. By cross-referencing professional resumes with technical study materials, the system generates context-aware, industry-weighted questions that bridge the gap between theory and real-world application.
+**The Problem:** Most interview prep tools are generic. They ask the same basic questions regardless of your actual experience or the specific syllabus you studied.
+
+**The Solution:** **AI Career Master** is a personalized, RAG-powered (Retrieval-Augmented Generation) platform. It "reads" your specific study notes and your unique resume to simulate a high-pressure technical interview tailored exactly to you.
 
 ---
 
-## 🚀 Core Technical Features
+## 🚀 One-Minute Overview: How it Works
 
-### 🎙️ Multimodal Interaction (Speech-to-Text)
-Integrated **Groq Whisper-large-v3** for ultra-low latency transcription. Candidates can speak their answers naturally, simulating the pressure of a live verbal interview. The system handles "Batch Transcription" to maintain context and technical keyword accuracy.
-
-### 📄 Intelligent Multi-Doc RAG Pipeline
-A custom-built PDF processing engine using **PyPDF2** that categorizes and merges disparate data sources. The logic automatically distinguishes between:
-- **Professional Experience:** (Parsed from Resumes/CVs)
-- **Technical Knowledge Base:** (Parsed from Study Notes/Syllabus)
-
-### ⚖️ Adaptive Difficulty & Industry Weighting
-The prompting engine applies dynamic probability weighting based on the target career level:
-- **Internship Mode:** Prioritizes foundational definitions and theoretical verification (70% weight on Study Notes).
-- **Job Mode:** Focuses on architectural trade-offs, scalability, and project logic (70% weight on Resume Experience).
-
-### ☁️ Persistent Cloud Persistence & Meta-Analysis
-Utilizes **Supabase (PostgreSQL)** for permanent storage of user performance and qualitative reviews. Includes an **AI Product Manager** feature that performs meta-analysis on all-time reviews to identify technical debt and prompt drift.
+1.  **Context Injection:** You upload your PDF notes (Syllabus) and your Resume.
+2.  **Hybrid Questioning:** The AI cross-references your projects with technical theory. (e.g., *"I see you built an Ocular Disease model; how does the Cross-Entropy loss mentioned in your notes apply to that specific dataset?"*)
+3.  **Adaptive Intelligence:** 
+    *   **Internship Mode:** 50/50 split between fundamental concepts and project basics.
+    *   **Job Mode:** Focuses 70% on deep architecture, scalability, and project trade-offs.
+4.  **Instant Feedback:** Every response receives a 1-10 score, technical feedback, and a 2-line "Interviewer's Ideal Answer."
+5.  **Cloud Persistence:** Your progress and feedback are saved permanently to a cloud database (Supabase) for long-term tracking.
 
 ---
 
-## 🛠️ The Tech Stack
+## 🛠️ The Technical Powerhouse (Tech Stack)
 
-| Layer | Technology |
-| :--- | :--- |
-| **LLM Inference** | Llama 3.1 8B (via Groq LPUs for <500ms response time) |
-| **Speech Processing** | Whisper-large-v3 (Multimodal Bridge) |
-| **Frontend** | Streamlit (Cloud-Native Framework) |
-| **Cloud Database** | Supabase (PostgreSQL with RLS Security) |
-| **Data Extraction** | PyPDF2 (Vectorizable text parsing) |
-
----
-
-## ⚙️ System Architecture & Workflow
-
-1. **Extraction Layer:** Parallel parsing of multi-PDF uploads into structured text buffers.
-2. **Context Routing:** Heuristic classification of documents into "Career Profile" vs "Syllabus Context."
-3. **Logic Engine:** A stateful navigation controller manages session integrity (Back/Next/Finish) using Streamlit `session_state`.
-4. **Evaluation Engine:** A dual-prompt system providing quantitative scoring (1-10) and synthesized "Expert Solutions" for skipped questions.
-5. **Persistence Layer:** Secure API connection to Supabase enforcing **Row-Level Security (RLS)** for anonymous feedback logging.
+| Layer | Technology | Why? |
+| :--- | :--- | :--- |
+| **Brain** | **Llama 3.1 8B** | State-of-the-art reasoning for technical evaluation. |
+| **Inference** | **Groq LPU™** | Ultra-low latency (<0.5s response) for a real-time feel. |
+| **RAG Pipeline** | **PyPDF2 / Python** | Custom logic to parse and route context from multiple PDFs. |
+| **Frontend** | **Streamlit** | High-performance reactive web interface. |
+| **Database** | **Supabase (Postgres)** | Permanent, secure cloud storage for user reviews and metrics. |
+| **Notation** | **LaTeX / Markdown** | Professional rendering of complex Math/ML formulas. |
 
 ---
 
-## 📊 Performance Metrics for Interviewers
+## 🧠 Key Engineering Challenges Solved
 
-- **Inference Latency:** Average <0.8s for technical evaluation.
-- **RAG Fidelity:** 0% Hallucination rate by enforcing strict technical constraints in system prompts.
-- **User Growth:** Persistent tracking of "Readiness Scores" across multiple sessions.
+### 1. Semantic De-Duplication (The Repetition Fix)
+Implemented a **Negative Constraint Pipeline**. By injecting the current session history back into the system prompt as a "Forbidden List," the AI is forced to move to new technical sub-topics, ensuring 100% unique questions in every session.
+
+### 2. Context Routing & Weighting
+Developed a **career-level weighting algorithm**. The system dynamically adjusts the probability of "Theory vs. Applied" questions based on the user's goal, simulating real-world hiring rubrics used by Tier-1 tech firms.
+
+### 3. Graceful UI/UX Degradation
+Designed the platform with **Standard Math Notation (LaTeX)**. Integrated strict formatting guards to prevent common LLM "chatter," ensuring the interviewer stays in character and the text remains horizontal and readable across devices.
+
+---
+
+## ⚙️ Installation & Usage
+
+1. **Get an API Key:** Sign up at [Groq Cloud](https://console.groq.com/).
+2. **Environment Setup:** 
+   - Create a `.streamlit/secrets.toml` file.
+   - Add your `GROQ_API_KEY`, `SUPABASE_URL`, and `SUPABASE_KEY`.
+3. **Run the App:**
+   ```bash
+   pip install -r requirements.txt
+   streamlit run app.py
