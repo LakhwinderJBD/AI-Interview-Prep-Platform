@@ -179,7 +179,7 @@ if st.session_state.started and api_key:
 else:
     st.title("🎯 AI Career Architect")
     st.markdown("### **Master the Technical Interview with Domain Intelligence**")
-    st.write("Secure your target ₹50k+ stipend by practicing with an AI that knows your specific projects and study syllabus.")
+    st.write("Secure your target good stipend/salary by practicing with an AI that knows your specific projects and study syllabus.")
     
     st.divider()
     
