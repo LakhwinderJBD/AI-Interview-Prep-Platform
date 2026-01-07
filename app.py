@@ -1,4 +1,4 @@
-import streamlit as st
+\\import streamlit as st
 from groq import Groq
 import PyPDF2
 import random
@@ -45,7 +45,7 @@ def safe_groq_call(system_prompt, user_prompt):
                 model="llama-3.1-8b-instant",
                 messages=[{"role": "system", "content": system_prompt},
                           {"role": "user", "content": user_prompt}],
-                temperature=0.1
+                temperature=0.4 # Increased slightly for variety in questions
             )
             return res.choices[0].message.content
         except Exception as e:
@@ -89,31 +89,25 @@ if st.session_state.started and api_key:
     data = st.session_state.session_data
     lvl = st.session_state.level
 
-    # --- PHASE A: FINAL REPORT ---
     if c >= len(data):
         st.header("📊 Final Performance Report")
         st.divider()
-        
         for i, item in enumerate(data):
             if item["q"] is None: continue 
-
             status = "✅ Attempted" if item['a'] else "❌ Skipped"
             with st.expander(f"Question {i+1} | {status}", expanded=True):
                 st.markdown(f"**Question:** {item['q']}")
                 st.write(f"**Your Answer:** {item['a'] if item['a'] else 'No answer provided.'}")
-                
                 if item['a']:
                     if not item['eval']:
                         item['eval'] = safe_groq_call("Score 1-10 & brief feedback.", f"Q: {item['q']} A: {item['a']}")
                     st.info(f"**Feedback:** {item['eval']}")
-                
                 if not item['ideal']:
-                    with st.spinner(f"Generating ideal solution for Q{i+1}..."):
-                        sol_sys = "Provide exactly 2 lines of the ideal answer. Use LaTeX ($) for math."
+                    with st.spinner(f"Generating ideal solution..."):
+                        sol_sys = "Provide a perfect 2-line answer. Use LaTeX ($) for math."
                         item['ideal'] = safe_groq_call(sol_sys, f"Question: {item['q']}")
                 st.success(f"**Interviewer's Ideal Answer:**\n\n{item['ideal']}")
 
-        # REVIEW
         st.divider()
         with st.form("feedback"):
             u_rating = st.select_slider("AI Accuracy", options=[1,2,3,4,5], value=5)
@@ -129,39 +123,43 @@ if st.session_state.started and api_key:
         if st.button("🔄 Restart Interview"):
             st.session_state.started = False; st.rerun()
 
-    # --- PHASE B: ACTIVE INTERVIEW ---
     else:
-        # --- FIX: UNIQUE QUESTION GENERATION ---
+        # --- FIXED: UNIQUE & RELATED QUESTION GENERATION ---
         if data[c]["q"] is None:
-            with st.spinner("🤖 Thinking..."):
-                # Format previously asked questions as a list to help AI avoid them
+            with st.spinner("🤖 Crafting a unique question..."):
                 asked_questions = [item["q"] for item in data if item["q"]]
                 asked_str = "\n".join([f"- {q}" for q in asked_questions])
                 
+                # Logic: Alternate sources for variety
                 use_resume = (random.random() < 0.7) if lvl == "Job" else (random.random() < 0.3)
-                q_sys = f"""You are a technical interviewer. Ask ONE {lvl} level question. 
-                CRITICAL RULES:
-                1. NO preamble. Output ONLY the raw question.
-                2. Use LaTeX ($) for math symbols.
-                3. DO NOT repeat or ask anything similar to these questions:
-                {asked_str}"""
                 
-                u_content = f"RESUME: {st.session_state.resume_context}\nNOTES: {st.session_state.study_context}"
+                q_sys = f"""You are a professional technical interviewer. 
+                Your goal is to ask a technical question based on the provided documents.
+                
+                CRITICAL CONSTRAINTS:
+                1. Pick a technical topic or project that has NOT been covered in previous questions.
+                2. Output ONLY the raw question text. No preamble like 'Here is a question'.
+                3. Use LaTeX ($) for any math or statistical symbols.
+                
+                FORBIDDEN QUESTIONS (Do NOT repeat these):
+                {asked_str}
+                
+                Target Level: {lvl}"""
+                
+                u_content = f"RESUME/CV: {st.session_state.resume_context}\n\nSTUDY NOTES/PDF: {st.session_state.study_context}"
                 data[c]["q"] = safe_groq_call(q_sys, u_content)
                 st.rerun()
 
         st.progress((c + 1) / len(data))
         st.markdown(f"### {data[c]['q']}")
 
-        # Answer Input
-        user_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=200, placeholder="Explain your answer clearly...")
+        user_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=200)
         data[c]["a"] = user_input
 
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("⬅️ Previous") and c > 0: st.session_state.curr -= 1; st.rerun()
         with col2:
-            # COMBINED NEXT LOGIC
             if st.button("Next ➡️"):
                 if data[c]["a"] and not data[c]["eval"]:
                     with st.spinner("Analyzing..."):
@@ -173,16 +171,13 @@ if st.session_state.started and api_key:
                     data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback", f"Q: {data[c]['q']} A: {data[c]['a']}")
                 st.session_state.curr = len(data); st.rerun()
 
-        # --- FIX: SMART HINT LOGIC ---
         if st.button("💡 Get Hint"):
             with st.spinner(""):
-                # We send the question AND context to ensure the hint is relevant
-                h_sys = """You are a coach. Provide a tiny nudge of MAX 7 WORDS. 
-                NEVER give the answer. Guide the user to find the answer based on the provided question."""
+                h_sys = "Provide a tiny nudge of MAX 7 WORDS. NEVER give the answer. Guide the user to the logic."
                 data[c]["hint"] = safe_groq_call(h_sys, f"Question: {data[c]['q']}")
                 st.rerun()
         if data[c].get("hint"): st.warning(f"💡 {data[c]['hint']}")
 
 else:
     st.title("🎯 AI Interview Coach")
-    st.write("Professional practice with Math support. Voice and PDF removed for speed.")
+    st.write("Professional text-only practice with Math support.")
