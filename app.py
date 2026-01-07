@@ -13,6 +13,7 @@ st.markdown("""
     <style>
     .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; height: 3em; background-color: #FF4B4B; color: white; }
     .report-card { background-color: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #eee; margin-bottom: 15px; }
+    .feature-box { padding: 15px; border-radius: 10px; border-left: 5px solid #FF4B4B; background-color: #ffffff; margin-bottom: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -79,6 +80,8 @@ with st.sidebar:
                     "curr": 0, "level": level, "started": True
                 })
                 st.rerun()
+        else:
+            st.error("Missing API Key or PDF.")
 
 # --- 6. MAIN INTERFACE ---
 if st.session_state.started and api_key:
@@ -105,14 +108,14 @@ if st.session_state.started and api_key:
                     st.info(f"**Interviewer Feedback:**\n{item['eval']}")
                 
                 if not item['ideal']:
-                    sol_sys = "Provide a professional 2-line answer in PLAIN TEXT. Use LaTeX ($) ONLY for math formulas. Ensure text is horizontal and readable."
+                    sol_sys = "Provide a professional 2-line answer in PLAIN TEXT. Use LaTeX only for necessary math."
                     item['ideal'] = safe_groq_call(sol_sys, f"Q: {item['q']}")
                 st.success(f"**Interviewer's Ideal Answer:**\n\n{item['ideal']}")
 
         st.divider()
         with st.form("feedback"):
             u_rating = st.select_slider("AI Accuracy", options=[1,2,3,4,5], value=5)
-            u_comments = st.text_area("Notes for Developer:")
+            u_comments = st.text_area("Developer Notes:")
             if st.form_submit_button("Submit to Cloud"):
                 if supabase_client:
                     try:
@@ -135,9 +138,9 @@ if st.session_state.started and api_key:
 
                 if has_resume and is_resume_turn:
                     q_sys = f"""You are a senior hiring lead. 
-                    TASK: Pick a project or skill from the RESUME that HAS NOT been discussed yet.
+                    TASK: Pick a specific project or skill from the RESUME that HAS NOT been discussed yet.
                     CRITICAL: Ask a DEEP technical question. NO preamble. NO vertical text.
-                    FORBIDDEN TOPICS (Do not repeat these): {asked_list}"""
+                    FORBIDDEN TOPICS: {asked_list}"""
                     u_content = f"RESUME: {st.session_state.resume_context}\nTECH: {st.session_state.study_context}"
                 else:
                     q_sys = f"""You are a technical interviewer. 
@@ -160,7 +163,8 @@ if st.session_state.started and api_key:
         with col2:
             if st.button("Next ➡️"):
                 if data[c]["a"] and not data[c]["eval"]:
-                    data[c]["eval"] = safe_groq_call("2-line feedback & score 1-10.", f"Q: {data[c]['q']} A: {data[c]['a']}")
+                    with st.spinner("Analyzing..."):
+                        data[c]["eval"] = safe_groq_call("2-line feedback & score 1-10.", f"Q: {data[c]['q']} A: {data[c]['a']}")
                 st.session_state.curr += 1; st.rerun()
         with col3:
             if st.button("🏁 Finish"):
@@ -170,11 +174,49 @@ if st.session_state.started and api_key:
 
         if st.button("💡 Get Hint"):
             with st.spinner(""):
-                h_sys = "Provide a 7-word nudge clue. NO answers. NO vertical text."
+                h_sys = "Provide a 7-word nudge clue in PLAIN TEXT. NO answers."
                 data[c]["hint"] = safe_groq_call(h_sys, f"Q: {data[c]['q']}")
                 st.rerun()
         if data[c].get("hint"): st.warning(f"💡 {data[c]['hint']}")
 
+# --- NEW FRONT PAGE CONTEXT (LANDING PAGE) ---
 else:
-    st.title("🎯 AI Interview Coach")
-    st.write("Personalized practice to land ₹50k+ internships.")
+    st.title("🎯 AI Career Architect")
+    st.markdown("### **Master the Technical Interview with Domain Intelligence**")
+    st.write("Secure your target ₹50k+ stipend by practicing with an AI that knows your specific projects and study syllabus.")
+    
+    st.divider()
+    
+    # Feature Cards
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        <div class="feature-box">
+            <h4>📄 Multimodal RAG</h4>
+            <p>Our AI analyzes your specific Study Notes and PDF Syllabus to ask context-aware technical questions.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="feature-box">
+            <h4>💼 Resume Personalization</h4>
+            <p>Sync your Resume to receive project-specific questions. We test the depth of the technologies you use.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with col2:
+        st.markdown("""
+        <div class="feature-box">
+            <h4>⚖️ Adaptive Logic</h4>
+            <p><b>Internship Mode:</b> 50/50 Theory vs Projects.<br><b>Job Mode:</b> 70% Deep Architectural Deep-dives.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="feature-box">
+            <h4>⚡ Instant Evaluation</h4>
+            <p>Receive real-time 1-10 scoring, technical feedback, and verified Expert Ideal Answers for every query.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.info("**Getting Started:** 1️⃣ Upload your Resume & Study Notes in the sidebar. 2️⃣ Configure your career level. 3️⃣ Launch the session.")
