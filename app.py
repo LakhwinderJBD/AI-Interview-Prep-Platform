@@ -13,7 +13,6 @@ st.markdown("""
     <style>
     .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; height: 3em; background-color: #FF4B4B; color: white; }
     .report-card { background-color: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #eee; margin-bottom: 15px; }
-    .feature-box { padding: 15px; border-radius: 10px; border-left: 5px solid #FF4B4B; background-color: #ffffff; margin-bottom: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -80,8 +79,6 @@ with st.sidebar:
                     "curr": 0, "level": level, "started": True
                 })
                 st.rerun()
-        else:
-            st.error("Missing API Key or PDF.")
 
 # --- 6. MAIN INTERFACE ---
 if st.session_state.started and api_key:
@@ -108,14 +105,14 @@ if st.session_state.started and api_key:
                     st.info(f"**Interviewer Feedback:**\n{item['eval']}")
                 
                 if not item['ideal']:
-                    sol_sys = "Provide a professional 2-line answer in PLAIN TEXT. Use LaTeX only for necessary math."
+                    sol_sys = "Provide a professional 2-line answer in PLAIN TEXT. Use LaTeX ($) ONLY for math formulas. Ensure text is horizontal and readable."
                     item['ideal'] = safe_groq_call(sol_sys, f"Q: {item['q']}")
                 st.success(f"**Interviewer's Ideal Answer:**\n\n{item['ideal']}")
 
         st.divider()
         with st.form("feedback"):
             u_rating = st.select_slider("AI Accuracy", options=[1,2,3,4,5], value=5)
-            u_comments = st.text_area("Developer Notes:")
+            u_comments = st.text_area("Notes for Developer:")
             if st.form_submit_button("Submit to Cloud"):
                 if supabase_client:
                     try:
@@ -138,9 +135,9 @@ if st.session_state.started and api_key:
 
                 if has_resume and is_resume_turn:
                     q_sys = f"""You are a senior hiring lead. 
-                    TASK: Pick a specific project or skill from the RESUME that HAS NOT been discussed yet.
+                    TASK: Pick a project or skill from the RESUME that HAS NOT been discussed yet.
                     CRITICAL: Ask a DEEP technical question. NO preamble. NO vertical text.
-                    FORBIDDEN TOPICS: {asked_list}"""
+                    FORBIDDEN TOPICS (Do not repeat these): {asked_list}"""
                     u_content = f"RESUME: {st.session_state.resume_context}\nTECH: {st.session_state.study_context}"
                 else:
                     q_sys = f"""You are a technical interviewer. 
@@ -163,8 +160,7 @@ if st.session_state.started and api_key:
         with col2:
             if st.button("Next ➡️"):
                 if data[c]["a"] and not data[c]["eval"]:
-                    with st.spinner("Analyzing..."):
-                        data[c]["eval"] = safe_groq_call("2-line feedback & score 1-10.", f"Q: {data[c]['q']} A: {data[c]['a']}")
+                    data[c]["eval"] = safe_groq_call("2-line feedback & score 1-10.", f"Q: {data[c]['q']} A: {data[c]['a']}")
                 st.session_state.curr += 1; st.rerun()
         with col3:
             if st.button("🏁 Finish"):
@@ -174,7 +170,7 @@ if st.session_state.started and api_key:
 
         if st.button("💡 Get Hint"):
             with st.spinner(""):
-                h_sys = "Provide a 7-word nudge clue in PLAIN TEXT. NO answers."
+                h_sys = "Provide a 7-word nudge clue. NO answers. NO vertical text."
                 data[c]["hint"] = safe_groq_call(h_sys, f"Q: {data[c]['q']}")
                 st.rerun()
         if data[c].get("hint"): st.warning(f"💡 {data[c]['hint']}")
