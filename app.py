@@ -36,8 +36,8 @@ if "started" not in st.session_state:
         "started": False, "level": "Internship"
     })
 
-# --- 4. API HELPER WITH RETRY LOGIC ---
-def safe_groq_call(system_prompt, user_prompt):
+# --- 4. API HELPER WITH DYNAMIC TEMPERATURE ---
+def safe_groq_call(system_prompt, user_prompt, temp=0.1):
     client = Groq(api_key=api_key)
     for attempt in range(3):
         try:
@@ -45,15 +45,13 @@ def safe_groq_call(system_prompt, user_prompt):
                 model="llama-3.1-8b-instant",
                 messages=[{"role": "system", "content": system_prompt},
                           {"role": "user", "content": user_prompt}],
-                temperature=0.4 # Increased slightly for variety in questions
+                temperature=temp
             )
             return res.choices[0].message.content
         except Exception as e:
-            if "429" in str(e):
-                time.sleep(3)
-            else:
-                return f"AI Logic Error: {str(e)}"
-    return "API Busy. Try again."
+            if "429" in str(e): time.sleep(3)
+            else: return f"AI Error: {str(e)}"
+    return "API Busy."
 
 def process_files(uploaded_files):
     s_text, r_text = "", ""
@@ -64,7 +62,7 @@ def process_files(uploaded_files):
         else: s_text += text
     return s_text[:7000], r_text[:3000]
 
-# --- 5. SIDEBAR ---
+# --- 5. SIDEBAR: SETUP ---
 with st.sidebar:
     st.title("⚙️ Setup")
     level = st.selectbox("Preparation Level", ["Internship", "Job"])
@@ -89,25 +87,24 @@ if st.session_state.started and api_key:
     data = st.session_state.session_data
     lvl = st.session_state.level
 
+    # --- PHASE A: FINAL REPORT ---
     if c >= len(data):
         st.header("📊 Final Performance Report")
-        st.divider()
         for i, item in enumerate(data):
             if item["q"] is None: continue 
             status = "✅ Attempted" if item['a'] else "❌ Skipped"
             with st.expander(f"Question {i+1} | {status}", expanded=True):
                 st.markdown(f"**Question:** {item['q']}")
                 st.write(f"**Your Answer:** {item['a'] if item['a'] else 'No answer provided.'}")
-                if item['a']:
-                    if not item['eval']:
-                        item['eval'] = safe_groq_call("Score 1-10 & brief feedback.", f"Q: {item['q']} A: {item['a']}")
-                    st.info(f"**Feedback:** {item['eval']}")
+                if item['a'] and not item['eval']:
+                    item['eval'] = safe_groq_call("Score 1-10 & Feedback.", f"Q: {item['q']} A: {item['a']}", temp=0.1)
+                if item['eval']: st.info(f"**AI Feedback:**\n{item['eval']}")
+                
                 if not item['ideal']:
-                    with st.spinner(f"Generating ideal solution..."):
-                        sol_sys = "Provide a perfect 2-line answer. Use LaTeX ($) for math."
-                        item['ideal'] = safe_groq_call(sol_sys, f"Question: {item['q']}")
+                    item['ideal'] = safe_groq_call("Provide a 2-line expert answer. Use LaTeX.", f"Q: {item['q']}", temp=0.1)
                 st.success(f"**Interviewer's Ideal Answer:**\n\n{item['ideal']}")
 
+        # REVIEW & SAVE
         st.divider()
         with st.form("feedback"):
             u_rating = st.select_slider("AI Accuracy", options=[1,2,3,4,5], value=5)
@@ -120,64 +117,72 @@ if st.session_state.started and api_key:
                         supabase_client.table("reviews").insert({"level": lvl, "rating": u_rating, "comment": u_comments, "avg_score": avg_s}).execute()
                         st.success("✅ Saved!")
                     except: pass
-        if st.button("🔄 Restart Interview"):
+        if st.button("🔄 Restart"):
             st.session_state.started = False; st.rerun()
 
+    # --- PHASE B: ACTIVE INTERVIEW ---
     else:
-        # --- FIXED: UNIQUE & RELATED QUESTION GENERATION ---
+        # --- FIX: DETERMINISTIC SOURCE SWITCHING ---
         if data[c]["q"] is None:
-            with st.spinner("🤖 Crafting a unique question..."):
-                asked_questions = [item["q"] for item in data if item["q"]]
-                asked_str = "\n".join([f"- {q}" for q in asked_questions])
+            with st.spinner("🤖 Crafting your next question..."):
+                asked_str = "\n".join([f"- {item['q']}" for item in data if item['q']])
                 
-                # Logic: Alternate sources for variety
-                use_resume = (random.random() < 0.7) if lvl == "Job" else (random.random() < 0.3)
+                # Check if we have a resume. If not, always use Study Notes.
+                has_resume = len(st.session_state.resume_context) > 50
                 
-                q_sys = f"""You are a professional technical interviewer. 
-                Your goal is to ask a technical question based on the provided documents.
-                
-                CRITICAL CONSTRAINTS:
-                1. Pick a technical topic or project that has NOT been covered in previous questions.
-                2. Output ONLY the raw question text. No preamble like 'Here is a question'.
-                3. Use LaTeX ($) for any math or statistical symbols.
-                
-                FORBIDDEN QUESTIONS (Do NOT repeat these):
-                {asked_str}
-                
-                Target Level: {lvl}"""
-                
-                u_content = f"RESUME/CV: {st.session_state.resume_context}\n\nSTUDY NOTES/PDF: {st.session_state.study_context}"
-                data[c]["q"] = safe_groq_call(q_sys, u_content)
+                # Logic: Question 1, 3, 5 = RESUME | Question 2, 4, 6 = STUDY NOTES
+                # (If no resume, it defaults to study notes)
+                if has_resume and (c % 2 == 0):
+                    # FORCE RESUME FOCUS
+                    q_sys = f"""You are a professional interviewer. 
+                    TASK: Pick a specific project or work experience from the RESUME and ask a deep technical question about it.
+                    CRITICAL: NO preamble. Output ONLY the question.
+                    DO NOT repeat or ask anything similar to: {asked_str}"""
+                    u_content = f"RESUME: {st.session_state.resume_context}\nTECH CONTEXT: {st.session_state.study_context}"
+                else:
+                    # FORCE STUDY NOTES FOCUS
+                    q_sys = f"""You are a technical interviewer. 
+                    TASK: Ask a theoretical question based ONLY on the STUDY NOTES provided.
+                    CRITICAL: DO NOT mention the candidate's resume or projects.
+                    CRITICAL: NO preamble. Output ONLY the question text.
+                    Use LaTeX ($) for math. Do not repeat: {asked_str}"""
+                    u_content = f"STUDY NOTES: {st.session_state.study_context}"
+
+                # Use Higher Temperature (0.7) for Question Generation for variety
+                data[c]["q"] = safe_groq_call(q_sys, u_content, temp=0.7)
                 st.rerun()
 
         st.progress((c + 1) / len(data))
         st.markdown(f"### {data[c]['q']}")
 
+        # Answer Input
         user_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=200)
         data[c]["a"] = user_input
 
+        # NAVIGATION
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("⬅️ Previous") and c > 0: st.session_state.curr -= 1; st.rerun()
         with col2:
             if st.button("Next ➡️"):
                 if data[c]["a"] and not data[c]["eval"]:
-                    with st.spinner("Analyzing..."):
-                        data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback (2 lines).", f"Q: {data[c]['q']} A: {data[c]['a']}")
+                    with st.spinner("Checking..."):
+                        data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback", f"Q: {data[c]['q']} A: {data[c]['a']}", temp=0.1)
                 st.session_state.curr += 1; st.rerun()
         with col3:
             if st.button("🏁 Finish"):
                 if data[c]["a"] and not data[c]["eval"]:
-                    data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback", f"Q: {data[c]['q']} A: {data[c]['a']}")
+                    data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback", f"Q: {data[c]['q']} A: {data[c]['a']}", temp=0.1)
                 st.session_state.curr = len(data); st.rerun()
 
         if st.button("💡 Get Hint"):
             with st.spinner(""):
-                h_sys = "Provide a tiny nudge of MAX 7 WORDS. NEVER give the answer. Guide the user to the logic."
-                data[c]["hint"] = safe_groq_call(h_sys, f"Question: {data[c]['q']}")
+                h_sys = "Provide a 7-word clue. DO NOT give the answer."
+                data[c]["hint"] = safe_groq_call(h_sys, f"Question: {data[c]['q']}", temp=0.1)
                 st.rerun()
         if data[c].get("hint"): st.warning(f"💡 {data[c]['hint']}")
 
 else:
-    st.title("🎯 AI Interview Coach")
-    st.write("Professional text-only practice with Math support.")
+    st.title("🎯 AI Career Master")
+    st.write("Professional practice with split-context logic (Resume vs. Theory).")
+    st.info("Upload your Resume and Study Material. The AI will alternate between project-based and theoretical questions.")
