@@ -36,7 +36,7 @@ if "started" not in st.session_state:
         "started": False, "level": "Internship"
     })
 
-# --- 4. API HELPER ---
+# --- 4. API HELPER WITH RETRY LOGIC ---
 def safe_groq_call(system_prompt, user_prompt, temp=0.1):
     client = Groq(api_key=api_key)
     for attempt in range(3):
@@ -51,7 +51,7 @@ def safe_groq_call(system_prompt, user_prompt, temp=0.1):
         except Exception as e:
             if "429" in str(e): time.sleep(3)
             else: return f"AI Error: {str(e)}"
-    return "API Busy."
+    return "API Busy. Please try again."
 
 def process_files(uploaded_files):
     s_text, r_text = "", ""
@@ -90,7 +90,7 @@ if st.session_state.started and api_key:
     # --- PHASE A: FINAL REPORT ---
     if c >= len(data):
         st.header("📊 Final Performance Report")
-        st.write("Session completed successfully. Review your detailed evaluation below.")
+        st.write("Review your detailed technical evaluation below.")
         st.divider()
         
         for i, item in enumerate(data):
@@ -102,14 +102,14 @@ if st.session_state.started and api_key:
                 
                 if item['a']:
                     if not item['eval']:
-                        # STRICT PLAIN TEXT PROMPT
-                        e_sys = "You are a recruiter. Grade 1-10 and give feedback in PLAIN TEXT. DO NOT use LaTeX symbols ($) for normal words. Only use LaTeX for math."
+                        e_sys = "You are a recruiter. Grade 1-10 and give feedback. Use plain English. ONLY use $ for math."
                         item['eval'] = safe_groq_call(e_sys, f"Q: {item['q']} A: {item['a']}")
-                    st.info(f"**Interviewer Feedback:**\n{item['eval']}")
+                    st.info(f"**AI Feedback & Score:**\n{item['eval']}")
                 
                 if not item['ideal']:
-                    sol_sys = "Provide a professional 2-line answer in PLAIN TEXT. Use LaTeX only for necessary math."
-                    item['ideal'] = safe_groq_call(sol_sys, f"Q: {item['q']}")
+                    with st.spinner("Generating ideal solution..."):
+                        sol_sys = "Provide a professional 2-line answer. Use plain English. ONLY use $ for actual math formulas. Ensure normal spacing between words."
+                        item['ideal'] = safe_groq_call(sol_sys, f"Q: {item['q']}")
                 st.success(f"**Interviewer's Ideal Answer:**\n\n{item['ideal']}")
 
         # REVIEW
@@ -123,9 +123,9 @@ if st.session_state.started and api_key:
                         all_scores = re.findall(r'\b([1-9]|10)\b', str(data))
                         avg_s = sum([int(s) for s in all_scores]) / len(all_scores) if all_scores else 0
                         supabase_client.table("reviews").insert({"level": lvl, "rating": u_rating, "comment": u_comments, "avg_score": avg_s}).execute()
-                        st.success("✅ Saved to cloud!")
+                        st.success("✅ Saved to cloud database!")
                     except: pass
-        if st.button("🔄 Restart"):
+        if st.button("🔄 Start New Session"):
             st.session_state.started = False; st.rerun()
 
     # --- PHASE B: ACTIVE INTERVIEW ---
@@ -137,39 +137,38 @@ if st.session_state.started and api_key:
                 
                 has_resume = len(st.session_state.resume_context) > 50
 
-                # DETERMINISTIC LOGIC FOR JOB VS INTERNSHIP
-                # Job: Questions 1, 2, 4, 5 are Resume-based (Projects)
-                # Internship: Alternates Resume (1, 3, 5) and Notes (2, 4)
+                # DETERMINISTIC LOGIC: Job = 2/3 Resume | Internship = 1/2 Resume
                 is_resume_turn = True
                 if lvl == "Job":
-                    if (c + 1) % 3 == 0: is_resume_turn = False # Every 3rd is theory
+                    if (c + 1) % 3 == 0: is_resume_turn = False
                 else:
-                    if (c + 1) % 2 == 0: is_resume_turn = False # Every 2nd is theory
+                    if (c + 1) % 2 == 0: is_resume_turn = False
 
                 if has_resume and is_resume_turn:
                     q_sys = f"""You are a professional hiring lead. 
-                    TASK: Pick a specific project or skill from the RESUME and ask a DEEP technical question about it.
-                    CRITICAL: NO preamble. Output ONLY the question.
-                    FORBIDDEN QUESTIONS (Do NOT repeat or ask anything similar to these):
-                    {asked_list}"""
+                    TASK: Pick a specific project from the RESUME and ask a DEEP technical question about it.
+                    CRITICAL FORMATTING: Write in plain English. Ensure normal spaces between words. 
+                    DO NOT wrap the whole sentence in dollar signs. ONLY use $ for math variables.
+                    NO preamble. Output ONLY the question.
+                    FORBIDDEN QUESTIONS: {asked_list}"""
                     u_content = f"RESUME: {st.session_state.resume_context}\nTECH REFERENCE: {st.session_state.study_context}"
                 else:
                     q_sys = f"""You are a technical interviewer. 
                     TASK: Ask a theoretical question based ONLY on the STUDY NOTES. 
-                    CRITICAL: NO intro. Output ONLY the question text. Use LaTeX ($) for math.
-                    FORBIDDEN QUESTIONS:
-                    {asked_list}"""
+                    CRITICAL FORMATTING: Write in plain English with normal spaces. 
+                    DO NOT wrap the whole sentence in $. ONLY use $ for math formulas.
+                    NO preamble. Output ONLY the question text.
+                    FORBIDDEN QUESTIONS: {asked_list}"""
                     u_content = f"NOTES: {st.session_state.study_context}"
 
-                # Higher Temp (0.7) for Variety
                 data[c]["q"] = safe_groq_call(q_sys, u_content, temp=0.7)
                 st.rerun()
 
         st.progress((c + 1) / len(data))
-        st.markdown(f"### {data[c]['q']}")
+        st.markdown(f"#### {data[c]['q']}")
 
         # Answer Input
-        user_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=180, placeholder="Type your technical response here...")
+        user_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=180, placeholder="Explain your answer clearly...")
         data[c]["a"] = user_input
 
         col1, col2, col3 = st.columns(3)
@@ -178,8 +177,8 @@ if st.session_state.started and api_key:
         with col2:
             if st.button("Next ➡️"):
                 if data[c]["a"] and not data[c]["eval"]:
-                    with st.spinner("Analyzing..."):
-                        data[c]["eval"] = safe_groq_call("2-line Plain Text feedback & score 1-10.", f"Q: {data[c]['q']} A: {data[c]['a']}")
+                    with st.spinner("Checking answer..."):
+                        data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback. Use plain English.", f"Q: {data[c]['q']} A: {data[c]['a']}")
                 st.session_state.curr += 1; st.rerun()
         with col3:
             if st.button("🏁 Finish"):
@@ -189,12 +188,12 @@ if st.session_state.started and api_key:
 
         if st.button("💡 Get Hint"):
             with st.spinner(""):
-                h_sys = "Provide a 7-word nudge clue in PLAIN TEXT. NO answers."
+                h_sys = "Provide a 7-word nudge in plain English. NO math unless needed. NO answer."
                 data[c]["hint"] = safe_groq_call(h_sys, f"Q: {data[c]['q']}")
                 st.rerun()
         if data[c].get("hint"): st.warning(f"💡 {data[c]['hint']}")
 
 else:
     st.title("🎯 AI Interview Architect")
-    st.write("Professional interview practice with industry-standard career level logic.")
+    st.write("Professional practice with industry-standard career level logic.")
     st.info("Upload Resume + Notes. We alternate between project deep-dives and technical theory.")
