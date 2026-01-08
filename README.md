@@ -1,6 +1,6 @@
 # 🎯 AI Career Master: Intelligent Interview Simulator
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_svg.svg)](https://ai-interview-prep-platform-cwps9szn55ybmqtga6wden.streamlit.app/)
+[![Clink Here for Demo](https://static.streamlit.io/badges/streamlit_badge_svg.svg)](https://ai-interview-prep-platform-cwps9szn55ybmqtga6wden.streamlit.app/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Groq AI](https://img.shields.io/badge/AI-Groq%20LPU-orange)](https://groq.com/)
 [![Supabase](https://img.shields.io/badge/Database-Supabase-green)](https://supabase.com/)
