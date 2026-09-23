@@ -1,5 +1,6 @@
 # 🎯 AI Career Master: Intelligent Interview Simulator
 
+[![Clink Here for Demo](https://static.streamlit.io/badges/streamlit_badge_svg.svg)](https://ai-interview-prep-platform-cwps9szn55ybmqtga6wden.streamlit.app/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Groq AI](https://img.shields.io/badge/AI-Groq%20LPU-orange)](https://groq.com/)
 [![Supabase](https://img.shields.io/badge/Database-Supabase-green)](https://supabase.com/)
@@ -28,7 +29,7 @@
 | :--- | :--- | :--- |
 | **Brain** | **Llama 3.1 8B** | State-of-the-art reasoning for technical evaluation. |
 | **Inference** | **Groq LPU™** | Ultra-low latency (<0.5s response) for a real-time feel. |
-| **RAG Pipeline** | **PyPDF2 / Python** | Custom logic to parse and route context from multiple PDFs. |
+| **RAG Pipeline** | **Scikit-Learn (TF-IDF)** | Uses Cosine Similarity to dynamically retrieve relevant PDF chunks. |
 | **Frontend** | **Streamlit** | High-performance reactive web interface. |
 | **Database** | **Supabase (Postgres)** | Permanent, secure cloud storage for user reviews and metrics. |
 | **Notation** | **LaTeX / Markdown** | Professional rendering of complex Math/ML formulas. |
