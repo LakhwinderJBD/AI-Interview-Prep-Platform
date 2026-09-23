@@ -5,6 +5,8 @@ import random
 import time
 import re
 from supabase import create_client, Client
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # --- 1. PAGE CONFIG ---
 st.set_page_config(page_title="AI Career Master", page_icon="🎯", layout="centered")
@@ -60,13 +62,37 @@ def safe_groq_call(system_prompt, user_prompt, temp=0.1):
     return "API Busy."
 
 def process_files(uploaded_files):
-    s_text, r_text = "", ""
+    s_chunks, r_chunks = [], []
     for file in uploaded_files:
         reader = PyPDF2.PdfReader(file)
         text = "".join([p.extract_text() for p in reader.pages])
-        if any(word in file.name.lower() for word in ["resume", "cv"]): r_text += text
-        else: s_text += text
-    return s_text[:7000], r_text[:3000]
+        # Simple chunking by splitting on double newlines or full stops
+        chunks = [c.strip() for c in re.split(r'\n\n|\. ', text) if len(c.strip()) > 30]
+        
+        if any(word in file.name.lower() for word in ["resume", "cv"]): 
+            r_chunks.extend(chunks)
+        else: 
+            s_chunks.extend(chunks)
+    
+    # Return lists of chunks (up to a limit to prevent memory bloat)
+    return s_chunks[:200], r_chunks[:100]
+
+def retrieve_context(query, chunks, top_k=3):
+    if not chunks or not query: return ""
+    vectorizer = TfidfVectorizer(stop_words='english')
+    # Fit the vectorizer on the chunks and transform them
+    try:
+        tfidf_matrix = vectorizer.fit_transform(chunks)
+        query_vec = vectorizer.transform([query])
+        # Calculate cosine similarity between the query and all chunks
+        sim_scores = cosine_similarity(query_vec, tfidf_matrix).flatten()
+        # Get the indices of the top_k scores
+        top_indices = sim_scores.argsort()[-top_k:][::-1]
+        
+        retrieved = [chunks[i] for i in top_indices if sim_scores[i] > 0]
+        return "\n...\n".join(retrieved)
+    except Exception as e:
+        return "\n".join(chunks[:top_k]) # Fallback if TFIDF fails
 
 # --- 5. SIDEBAR: SETUP ---
 with st.sidebar:
@@ -78,9 +104,9 @@ with st.sidebar:
     if st.button("🚀 Start Personalized Session"):
         if api_key and all_files:
             with st.spinner("Analyzing materials..."):
-                study, resume = process_files(all_files)
+                study_chunks, resume_chunks = process_files(all_files)
                 st.session_state.update({
-                    "study_context": study, "resume_context": resume,
+                    "study_context": study_chunks, "resume_context": resume_chunks,
                     "session_data": [{"q": None, "a": "", "eval": None, "ideal": None, "hint": None} for _ in range(num_q)],
                     "curr": 0, "level": level, "started": True
                 })
@@ -136,21 +162,25 @@ if st.session_state.started and api_key:
                 asked_questions = [item["q"] for item in data if item["q"]]
                 asked_list = "\n".join([f"- {q}" for q in asked_questions])
                 
-                has_resume = len(st.session_state.resume_context) > 50
+                has_resume = len(st.session_state.resume_context) > 0
                 is_resume_turn = (c + 1) % 2 != 0 if lvl == "Internship" else (c + 1) % 3 != 0
 
                 if has_resume and is_resume_turn:
+                    # RAG Retrieval for Question Generation (Resume)
+                    relevant_context = "\n".join(random.sample(st.session_state.resume_context, min(3, len(st.session_state.resume_context))))
                     q_sys = f"""You are a senior hiring lead. 
-                    TASK: Pick a project or skill from the RESUME that HAS NOT been discussed yet.
-                    CRITICAL: Ask a DEEP technical question. NO preamble. NO vertical text.
+                    TASK: Pick a project or skill from the provided RESUME chunks that HAS NOT been discussed yet.
+                    CRITICAL: Ask a DEEP technical question based on it. NO preamble. NO vertical text.
                     FORBIDDEN TOPICS (Do not repeat these): {asked_list}"""
-                    u_content = f"RESUME: {st.session_state.resume_context}\nTECH: {st.session_state.study_context}"
+                    u_content = f"RESUME CHUNKS:\n{relevant_context}"
                 else:
+                    # RAG Retrieval for Question Generation (Notes)
+                    relevant_context = "\n".join(random.sample(st.session_state.study_context, min(3, len(st.session_state.study_context))))
                     q_sys = f"""You are a technical interviewer. 
-                    TASK: Ask a theoretical question based ONLY on the STUDY NOTES. 
+                    TASK: Ask a theoretical question based ONLY on the provided STUDY NOTES chunks. 
                     CRITICAL: DO NOT repeat topics discussed in: {asked_list}.
                     Output ONLY the question text. Use LaTeX ($) for math formulas."""
-                    u_content = f"NOTES: {st.session_state.study_context}"
+                    u_content = f"NOTES CHUNKS:\n{relevant_context}"
 
                 data[c]["q"] = safe_groq_call(q_sys, u_content, temp=0.7)
                 st.rerun()
@@ -166,12 +196,17 @@ if st.session_state.started and api_key:
         with col2:
             if st.button("Next ➡️"):
                 if data[c]["a"] and not data[c]["eval"]:
-                    data[c]["eval"] = safe_groq_call("2-line feedback & score 1-10.", f"Q: {data[c]['q']} A: {data[c]['a']}")
+                    # RAG Retrieval for Evaluation
+                    all_chunks = st.session_state.study_context + st.session_state.resume_context
+                    eval_context = retrieve_context(data[c]['q'], all_chunks)
+                    data[c]["eval"] = safe_groq_call("2-line feedback & score 1-10.", f"Context to base grading on:\n{eval_context}\n\nQ: {data[c]['q']} A: {data[c]['a']}")
                 st.session_state.curr += 1; st.rerun()
         with col3:
             if st.button("🏁 Finish"):
                 if data[c]["a"] and not data[c]["eval"]:
-                    data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback", f"Q: {data[c]['q']} A: {data[c]['a']}")
+                    all_chunks = st.session_state.study_context + st.session_state.resume_context
+                    eval_context = retrieve_context(data[c]['q'], all_chunks)
+                    data[c]["eval"] = safe_groq_call("Score 1-10 & Feedback", f"Context to base grading on:\n{eval_context}\n\nQ: {data[c]['q']} A: {data[c]['a']}")
                 st.session_state.curr = len(data); st.rerun()
 
         if st.button("💡 Get Hint"):
