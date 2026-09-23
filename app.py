@@ -50,7 +50,7 @@ def safe_groq_call(system_prompt, user_prompt, temp=0.1):
     for attempt in range(3):
         try:
             res = client.chat.completions.create(
-                model="llama-3.1-70b-versatile",
+                model="mixtral-8x7b-32768",
                 messages=[{"role": "system", "content": system_prompt},
                           {"role": "user", "content": user_prompt}],
                 temperature=temp
