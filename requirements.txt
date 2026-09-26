@@ -1,5 +1,5 @@
 streamlit
-groq
+openai
 PyPDF2
 supabase
 scikit-learn
