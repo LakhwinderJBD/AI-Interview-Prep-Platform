@@ -1,5 +1,5 @@
 import streamlit as st
-from groq import Groq
+from openai import OpenAI
 import PyPDF2
 import random
 import time
@@ -28,13 +28,13 @@ except Exception:
 
 api_key = None
 try:
-    if "GROQ_API_KEY" in st.secrets:
-        api_key = st.secrets["GROQ_API_KEY"]
+    if "OPENAI_API_KEY" in st.secrets:
+        api_key = st.secrets["OPENAI_API_KEY"]
 except Exception:
     pass
 
 if not api_key:
-    api_key = st.sidebar.text_input("Enter Groq API Key", type="password")
+    api_key = st.sidebar.text_input("Enter OpenAI API Key", type="password")
 
 # --- 3. SESSION STATE ---
 if "started" not in st.session_state:
@@ -46,11 +46,11 @@ if "started" not in st.session_state:
 
 # --- 4. API HELPER ---
 def safe_groq_call(system_prompt, user_prompt, temp=0.1):
-    client = Groq(api_key=api_key)
+    client = OpenAI(api_key=api_key)
     for attempt in range(3):
         try:
             res = client.chat.completions.create(
-                model="openai/gpt-oss-20b",
+                model="gpt-4o-mini",
                 messages=[{"role": "system", "content": system_prompt},
                           {"role": "user", "content": user_prompt}],
                 temperature=temp
@@ -114,7 +114,7 @@ with st.sidebar:
 
 # --- 6. MAIN INTERFACE ---
 if st.session_state.started and api_key:
-    client = Groq(api_key=api_key)
+    client = OpenAI(api_key=api_key)
     c = st.session_state.curr
     data = st.session_state.session_data
     lvl = st.session_state.level
