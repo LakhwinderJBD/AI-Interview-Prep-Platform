@@ -186,7 +186,11 @@ if st.session_state.started and api_key:
                 st.rerun()
 
         st.progress((c + 1) / len(data))
-        st.markdown(f"### {data[c]['q']}")
+        
+        # Bulletproof Math Rendering Fix for Streamlit
+        display_q = data[c]['q'].replace(r'\[', '$$').replace(r'\]', '$$').replace(r'\(', '$').replace(r'\)', '$')
+        
+        st.markdown(f"### {display_q}")
         user_input = st.text_area("Your Answer:", value=data[c]["a"], key=f"ans_{c}", height=180)
         data[c]["a"] = user_input
 
