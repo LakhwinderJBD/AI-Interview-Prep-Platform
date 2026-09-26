@@ -163,9 +163,17 @@ if st.session_state.started and api_key:
                 asked_list = "\n".join([f"- {q}" for q in asked_questions])
                 
                 has_resume = len(st.session_state.resume_context) > 0
+                has_notes = len(st.session_state.study_context) > 0
+                
                 is_resume_turn = (c + 1) % 2 != 0 if lvl == "Internship" else (c + 1) % 3 != 0
+                
+                # Override alternating logic if the user only uploaded one type of document
+                if has_resume and not has_notes:
+                    is_resume_turn = True
+                elif has_notes and not has_resume:
+                    is_resume_turn = False
 
-                if has_resume and is_resume_turn:
+                if is_resume_turn:
                     # RAG Retrieval for Question Generation (Resume)
                     relevant_context = "\n".join(random.sample(st.session_state.resume_context, min(3, len(st.session_state.resume_context))))
                     q_sys = f"""You are a senior hiring lead. 
