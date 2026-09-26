@@ -47,7 +47,7 @@ if "started" not in st.session_state:
 # --- 4. API HELPER ---
 def safe_groq_call(system_prompt, user_prompt, temp=0.1):
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash", generation_config={"temperature": temp})
+    model = genai.GenerativeModel("gemini-1.5-flash-latest", generation_config={"temperature": temp})
     full_prompt = f"System Instructions:\n{system_prompt}\n\nUser Input:\n{user_prompt}"
     for attempt in range(3):
         try:
