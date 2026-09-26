@@ -1,5 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
+from groq import Groq
 import PyPDF2
 import random
 import time
@@ -28,13 +28,13 @@ except Exception:
 
 api_key = None
 try:
-    if "GEMINI_API_KEY" in st.secrets:
-        api_key = st.secrets["GEMINI_API_KEY"]
+    if "GROQ_API_KEY" in st.secrets:
+        api_key = st.secrets["GROQ_API_KEY"]
 except Exception:
     pass
 
 if not api_key:
-    api_key = st.sidebar.text_input("Enter Gemini API Key", type="password")
+    api_key = st.sidebar.text_input("Enter Groq API Key", type="password")
 
 # --- 3. SESSION STATE ---
 if "started" not in st.session_state:
@@ -46,13 +46,16 @@ if "started" not in st.session_state:
 
 # --- 4. API HELPER ---
 def safe_groq_call(system_prompt, user_prompt, temp=0.1):
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash", generation_config={"temperature": temp})
-    full_prompt = f"System Instructions:\n{system_prompt}\n\nUser Input:\n{user_prompt}"
+    client = Groq(api_key=api_key)
     for attempt in range(3):
         try:
-            res = model.generate_content(full_prompt)
-            return res.text
+            res = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[{"role": "system", "content": system_prompt},
+                          {"role": "user", "content": user_prompt}],
+                temperature=temp
+            )
+            return res.choices[0].message.content
         except Exception as e:
             if "429" in str(e): time.sleep(3)
             else: return f"AI Error: {str(e)}"
@@ -111,7 +114,7 @@ with st.sidebar:
 
 # --- 6. MAIN INTERFACE ---
 if st.session_state.started and api_key:
-    genai.configure(api_key=api_key)
+    client = Groq(api_key=api_key)
     c = st.session_state.curr
     data = st.session_state.session_data
     lvl = st.session_state.level
