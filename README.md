@@ -2,7 +2,7 @@
 
 [![Clink Here for Demo](https://static.streamlit.io/badges/streamlit_badge_svg.svg)](https://ai-interview-prep-platform-cwps9szn55ybmqtga6wden.streamlit.app/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Groq AI](https://img.shields.io/badge/AI-Groq%20LPU-orange)](https://groq.com/)
+[![OpenAI](https://img.shields.io/badge/AI-OpenAI-orange)](https://openai.com/)
 [![Supabase](https://img.shields.io/badge/Database-Supabase-green)](https://supabase.com/)
 
 **The Problem:** Most interview prep tools are generic. They ask the same basic questions regardless of your actual experience or the specific syllabus you studied.
@@ -27,8 +27,8 @@
 
 | Layer | Technology | Why? |
 | :--- | :--- | :--- |
-| **Brain** | **Llama 3.1 8B** | State-of-the-art reasoning for technical evaluation. |
-| **Inference** | **Groq LPU™** | Ultra-low latency (<0.5s response) for a real-time feel. |
+| **Brain** | **GPT-4o mini** | State-of-the-art reasoning for technical evaluation. |
+| **Inference** | **OpenAI API** | Advanced context understanding for a real-time feel. |
 | **RAG Pipeline** | **Scikit-Learn (TF-IDF)** | Uses Cosine Similarity to dynamically retrieve relevant PDF chunks. |
 | **Frontend** | **Streamlit** | High-performance reactive web interface. |
 | **Database** | **Supabase (Postgres)** | Permanent, secure cloud storage for user reviews and metrics. |
@@ -51,7 +51,7 @@ Designed the platform with **Standard Math Notation (LaTeX)**. Integrated strict
 
 ## ⚙️ Installation & Usage
 
-1. **Get an API Key:** Sign up at [Groq Cloud](https://console.groq.com/).
+1. **Get an API Key:** Sign up at [OpenAI Platform](https://platform.openai.com/).
 
 ### Option A: Run with Docker (Recommended)
 You don't need to install Python or any dependencies. Just run these two commands:
@@ -59,7 +59,7 @@ You don't need to install Python or any dependencies. Just run these two command
 docker build -t ai-interview-app .
 docker run -p 8501:8501 ai-interview-app
 ```
-Then open your browser to `http://localhost:8501` and enter your Groq API key in the sidebar.
+Then open your browser to `http://localhost:8501` and enter your OpenAI API key in the sidebar.
 
 ### Option B: Run locally with Python
 ```bash
